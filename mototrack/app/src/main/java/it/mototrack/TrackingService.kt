@@ -17,6 +17,7 @@ enum class Mode { IDLE, RECORDING, PAUSED }
 data class TrackingState(
     val mode: Mode = Mode.IDLE, val ride: Ride? = null, val lean: Double? = null,
     val accelerationG: Double? = null, val accelerationSource: String = "gps",
+    val awaitingRightLean: Boolean = false, val calibrationHint: String = "Calibra a moto ferma: prima verticale, poi leggermente a destra.",
     val sensorAvailable: Boolean = false, val calibrated: Boolean = false, val message: String = "Pronto per un nuovo giro", val lastFixElapsed: Long = 0
 )
 class TrackingService : Service(), LocationListener, SensorEventListener {
@@ -24,7 +25,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         private val mutable = MutableStateFlow(TrackingState())
         val state = mutable.asStateFlow()
         const val START = "start"; const val PAUSE = "pause"; const val RESUME = "resume"
-        const val STOP = "stop"; const val ZERO = "zero"
+        const val STOP = "stop"; const val ZERO = "zero"; const val CONFIRM_RIGHT = "confirm_right"
     }
     private lateinit var locations: LocationManager
     private lateinit var sensors: SensorManager
@@ -36,8 +37,22 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     private var segment = 0
     private var activeStart = 0L
     private var accumulated = 0L
-    private var rawLean: Double? = null
-    private var zero: Double? = null
+    private val mount = MountCalibration()
+    private var gyroMagnitude = Double.POSITIVE_INFINITY
+    private var lastGyroNanos = 0L
+    private var stableSince = 0L
+    private var lastUp: DoubleArray? = null
+    private var lastUpNanos = 0L
+    private fun calibrationIsStationary(): Boolean {
+        val now = SystemClock.elapsedRealtimeNanos()
+        val orientationFresh = now - lastUpNanos in 0..500_000_000L
+        val gyroFresh = now - lastGyroNanos in 0..500_000_000L
+        val movingGps = mutable.value.lastFixElapsed > 0 &&
+            SystemClock.elapsedRealtime() - mutable.value.lastFixElapsed < 3000 &&
+            (ride?.points?.lastOrNull()?.speed ?: 0.0) > 1.0
+        return orientationFresh && gyroFresh && gyroMagnitude < 0.05 &&
+            stableSince > 0 && now - stableSince >= 1_000_000_000L && !movingGps
+    }
     private var lastSensor = 0L
     private val inertialFilter = InertialFilter()
     private var up: DoubleArray? = null
@@ -89,13 +104,20 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
                 requestLocations(); notifyState()
             }
             ZERO -> {
-                val current = rawLean?.takeIf { SystemClock.elapsedRealtime() - lastSensor < 2000 }
-                if (current != null) {
-                    zero = current
-                    up?.let { inertialFilter.calibrate(it) }
-                    resetAcceleration()
-                    mutable.value = mutable.value.copy(calibrated = true, lean = 0.0, message = "Zero piega e asse accelerazione impostati")
-                } else mutable.value = mutable.value.copy(message = "Orientamento non disponibile: tieni il telefono verticale")
+                val direction = up
+                if (direction != null && calibrationIsStationary() && mount.zero(direction)) {
+                    inertialFilter.clear(); resetAcceleration()
+                    mutable.value = mutable.value.copy(calibrated = false, awaitingRightLean = true, lean = null,
+                        calibrationHint = "1/2 Zero acquisito. Inclina leggermente la moto a destra (5–30°), tienila ferma e conferma.")
+                } else mutable.value = mutable.value.copy(calibrationHint = "Moto ferma e verticale: attendi un secondo senza muoverla. Servono orientamento e giroscopio.")
+            }
+            CONFIRM_RIGHT -> {
+                val direction = up
+                if (mutable.value.awaitingRightLean && direction != null && calibrationIsStationary() && mount.confirmRight(direction)) {
+                    inertialFilter.calibrate(mount.forward!!); resetAcceleration()
+                    mutable.value = mutable.value.copy(calibrated = true, awaitingRightLean = false, lean = mount.lean(direction),
+                        calibrationHint = "Calibrazione completa. Riporta la moto verticale. Ripeti se sposti il telefono.")
+                } else mutable.value = mutable.value.copy(calibrationHint = "Tieni ferma la moto inclinata a destra tra 5° e 30°, poi conferma. Per ripartire usa Ripeti zero.")
             }
             STOP -> stopRide()
         }
@@ -113,6 +135,9 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         val sensor = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         if (sensor != null) sensors.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
         else mutable.value = mutable.value.copy(message = "Sensore di orientamento non disponibile")
+        sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
+            sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+        }
         val linear = sensors.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         val available = linear != null && sensor != null && sensors.registerListener(this, linear, SensorManager.SENSOR_DELAY_GAME)
         mutable.value = mutable.value.copy(sensorAvailable = available)
@@ -157,6 +182,12 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     override fun onProviderDisabled(provider: String) { mutable.value = mutable.value.copy(message = "GPS disattivato: abilita la posizione") }
     override fun onProviderEnabled(provider: String) { mutable.value = mutable.value.copy(message = "Attendo il GPS") }
     override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
+            gyroMagnitude = sqrt(event.values.take(3).sumOf { it.toDouble() * it })
+            lastGyroNanos = event.timestamp
+            if (gyroMagnitude >= 0.05) stableSince = 0
+            return
+        }
         if (event.sensor.type == Sensor.TYPE_LINEAR_ACCELERATION) {
             if (mutable.value.mode != Mode.RECORDING || saving) return
             val g = inertialFilter.sample(DoubleArray(3) { event.values[it].toDouble() }, event.timestamp) ?: return
@@ -174,19 +205,17 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         val matrix = FloatArray(9)
         SensorManager.getRotationMatrixFromVector(matrix, event.values)
         up = doubleArrayOf(matrix[6].toDouble(), matrix[7].toDouble(), matrix[8].toDouble())
-        // Gravity projected into the screen plane avoids Euler roll's singularity
-        // when the phone is mounted upright. A nearly flat phone is unsupported.
-        if (hypot(matrix[6].toDouble(), matrix[7].toDouble()) < 0.5) {
-            rawLean = null
-            mutable.value = mutable.value.copy(lean = null)
-            return
-        }
-        rawLean = Math.toDegrees(atan2(-matrix[6].toDouble(), matrix[7].toDouble()))
+        val direction = up!!
+        val previous = lastUp
+        val gap = event.timestamp - lastUpNanos
+        val drift = previous?.let { acos(dot(it, direction).coerceIn(-1.0, 1.0)) } ?: Double.POSITIVE_INFINITY
+        if (gap > 500_000_000L || drift > 0.015 || gyroMagnitude >= 0.05) stableSince = 0
+        else if (stableSince == 0L) stableSince = event.timestamp
+        lastUp = direction; lastUpNanos = event.timestamp
         val now = SystemClock.elapsedRealtime()
         if (now - lastSensor < 100) return
         lastSensor = now
-        val lean = zero?.let { relativeAngle(rawLean!!, it) }
-        mutable.value = mutable.value.copy(lean = lean)
+        mutable.value = mutable.value.copy(lean = mount.lean(direction))
     }
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     private fun checkpoint() {

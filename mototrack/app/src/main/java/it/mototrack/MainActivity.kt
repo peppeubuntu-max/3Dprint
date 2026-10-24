@@ -131,7 +131,7 @@ private fun MotoTrack() {
         if (tab == 0) {
             TrackMap(state.ride?.points.orEmpty(), true, Modifier.weight(1f).fillMaxWidth(),
                 current = preview?.let { MapPosition(it.latitude, it.longitude) })
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 410.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("● 0   🟡 60   🔴 120+ km/h · grigio: dato assente", style = MaterialTheme.typography.labelSmall)
                 Text(notice ?: if (state.mode == Mode.IDLE) {
                     if (preview == null) "Attendo la posizione: verifica che il GPS sia attivo" else "Posizione disponibile • pronto per partire"
@@ -162,11 +162,13 @@ private fun MotoTrack() {
                         FilledTonalButton(enabled = !saving, modifier = Modifier.weight(1f), onClick = { command(TrackingService.STOP) }) { Text("Stop e salva") }
                     }
                 }
-                OutlinedButton(enabled = state.mode != Mode.IDLE, modifier = Modifier.fillMaxWidth(), onClick = { command(TrackingService.ZERO) }) {
-                    Text(if (state.calibrated) "Ricalibra piega e asse G" else "Imposta zero piega e asse G")
+                OutlinedButton(enabled = state.mode != Mode.IDLE, modifier = Modifier.fillMaxWidth(), onClick = { command(if (state.awaitingRightLean) TrackingService.CONFIRM_RIGHT else TrackingService.ZERO) }) {
+                    Text(if (state.awaitingRightLean) "2/2 Conferma inclinazione a destra" else if (state.calibrated) "Ricalibra montaggio" else "1/2 Moto verticale: imposta zero")
                 }
+                if (state.awaitingRightLean) TextButton(onClick = { command(TrackingService.ZERO) }) { Text("Ripeti zero a moto verticale") }
+                if (state.mode != Mode.IDLE) Text(state.calibrationHint, style = MaterialTheme.typography.bodySmall)
                 Text(if (state.mode == Mode.IDLE) "Avvia e calibra per misurare l’accelerazione in G." else if (!state.sensorAvailable) "Sensore lineare non disponibile: stima GPS in G." else if (!state.calibrated) "Calibra a moto ferma per attivare i G del sensore." else "G dal sensore; stima GPS se il dato manca.", style = MaterialTheme.typography.labelSmall)
-                Text("A moto ferma e verticale, azzera il telefono fissato al supporto. Piega stimata; +G accelerazione, −G frenata. Schermo verso il pilota, allineato alla moto.", style = MaterialTheme.typography.bodySmall)
+                Text("Telefono fissato in qualsiasi orientamento. Calibra da fermo, manubrio dritto, in un luogo sicuro e con aiuto se necessario. Piega stimata; +G accelerazione, −G frenata.", style = MaterialTheme.typography.bodySmall)
             }
         } else {
             val detail = selected

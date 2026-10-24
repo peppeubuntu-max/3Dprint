@@ -46,15 +46,25 @@ Configurare `sdk.dir=/percorso/android/sdk` in `local.properties` oppure
 
 ## Uso e limiti delle misure
 
-1. Fissare rigidamente il telefono in orientamento portrait, bordo superiore
-   verso l'alto e schermo rivolto al pilota. Supporti quasi orizzontali non
-   sono gestiti; la proiezione della gravità sullo schermo deve essere sufficiente.
-2. Premere Avvia e consentire la posizione **precisa**. Le notifiche sono
-   consigliate; il rifiuto della notifica non blocca la registrazione.
-3. A moto ferma e verticale, premere Imposta zero piega e asse G. Ricalibrare se
-   cambia il fissaggio. La calibrazione vale per il giro corrente.
-4. Attendere il GPS; stop salva anche un giro senza punti (es. GPS assente).
-5. Aprire Giri, scegliere il giro e scaricare il GPX.
+1. Fissare rigidamente il telefono in qualsiasi orientamento: verticale,
+   orizzontale, piatto o inclinato. Il telefono deve restare solidale alla moto.
+2. Premere Avvia e consentire la posizione precisa.
+3. A moto ferma, verticale, su piano e con manubrio dritto, attendere almeno
+   un secondo e premere «1/2 Moto verticale: imposta zero».
+4. Sempre da fermo e senza sterzare, inclinare la moto leggermente verso
+   DESTRA (5–30°), sostenerla stabilmente e confermare dopo un secondo.
+   Effettuare la procedura in un luogo sicuro, con aiuto se necessario.
+5. Riportare la moto verticale. La calibrazione è valida per il giro corrente;
+   ripeterla se cambia il supporto. Un solo zero non identifica l'asse di marcia.
+6. Stop salva il giro; Giri permette di consultarlo ed esportare il GPX.
+
+La conferma richiede orientamento e giroscopio aggiornati, stabilità per un
+secondo e assenza di movimento GPS noto. È comunque responsabilità di chi
+calibra tenere la moto ferma e usare le due posizioni corrette: i sensori non
+possono riconoscere una calibrazione fatta a sinistra invece che a destra.
+Senza calibrazione completa la piega non viene mostrata e l'accelerazione
+rimane la stima GPS etichettata. Non ruotare il telefono nel supporto dopo
+la calibrazione: rotazione dello schermo e rotazione fisica sono diverse.
 
 La piega deriva dal rotation vector del telefono, non da una IMU da moto:
 accelerazioni laterali, vibrazioni, fusione sensori e geometria del supporto
@@ -65,10 +75,14 @@ garantire accuratezza. Non sono simulati dati quando il sensore è assente.
 L'accelerazione usa il sensore lineare a frequenza richiesta di circa 50 Hz,
 con filtro passa basso (costante di tempo 0,15 s) e registrazione a circa 10 Hz.
 La frequenza reale dipende dal dispositivo. 1 G = 9,80665 m/s²; accelerazione
-positiva e frenata negativa. La calibrazione ricava l'asse di marcia dalla
-normale dello schermo proiettata sul piano orizzontale a moto ferma: telefono
-allineato all'asse della moto, schermo rivolto al pilota. Questo asse resta
-fisso rispetto al supporto durante il giro. Non è il modulo dell'accelerazione
+positiva e frenata negativa. La calibrazione ricava un riferimento 3D ortonormale dagli orientamenti
+verticale e inclinato a destra della moto. Il prodotto vettoriale definisce
+l'asse longitudinale; accelerazione e piega vengono proiettate negli assi
+della moto. Non vi sono assunzioni sul verso dello schermo. Gli assi restano
+fissi rispetto al supporto durante il giro. La procedura richiede solo rollio,
+non sterzata o variazioni di pendenza fra le due posizioni. Un supporto sul
+manubrio può muoversi rispetto al telaio quando si sterza, introducendo errori.
+Non è il modulo dell'accelerazione
 su tre assi: curve e buche vengono escluse solo nella misura in cui la
 proiezione e la rimozione della gravità sono accurate. Vibrazioni e pendenze
 possono lasciare errori; il filtro attenua anche i picchi più brevi.
@@ -95,7 +109,7 @@ dispositivo e vengono condivise solo attraverso l'esportazione scelta.
 ## Verifica
 
 Inclusi test JUnit per distanza, segmenti pausa, accelerazione/frenata,
-azzeramento angolare, scala colori, proiezione asse di marcia, conversione
+azzeramento angolare, scala colori, calibrazione 3D su 80 montaggi simulati, proiezione asse di marcia, conversione
 in G, filtro inerziale, picchi e struttura GPX con telemetria.
 
 **Build APK e test unitari completati con successo su GitHub Actions il
@@ -145,3 +159,5 @@ conservata privatamente. Gli attuali runner generano certificati debug
 indipendenti: questo APK può richiedere di disinstallare la vecchia build.
 Esportare prima i giri in GPX: la disinstallazione rimuove i dati locali.
 Non usare la firma debug temporanea per una distribuzione definitiva.
+
+Versione 0.3: calibrazione indipendente dal montaggio, controlli di stabilità e pannello registrazione scorrevole. Validazione fisica su moto ancora necessaria.

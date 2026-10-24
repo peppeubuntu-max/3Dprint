@@ -8,7 +8,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 class InertialTest {
     @Test fun uprightMountPreservesAccelerationAndBrakingSign() {
         val filter = InertialFilter()
-        assertTrue(filter.calibrate(doubleArrayOf(0.0, 1.0, 0.0)))
+        assertTrue(filter.calibrate(doubleArrayOf(0.0, 0.0, -1.0)))
         assertEquals(1.0, filter.sample(doubleArrayOf(0.0, 0.0, -STANDARD_GRAVITY), 1_000_000_000)!!, 1e-9)
         filter.reset()
         assertEquals(-0.5, filter.sample(doubleArrayOf(0.0, 0.0, STANDARD_GRAVITY / 2), 2_000_000_000)!!, 1e-9)
@@ -17,7 +17,7 @@ class InertialTest {
         val a = sqrt(0.5)
         val up = doubleArrayOf(0.0, a, a)
         val filter = InertialFilter()
-        assertTrue(filter.calibrate(up))
+        assertTrue(filter.calibrate(doubleArrayOf(0.0, a, -a)))
         assertEquals(0.0, filter.sample(DoubleArray(3) { up[it] * STANDARD_GRAVITY }, 1_000_000_000)!!, 1e-9)
         filter.reset()
         assertEquals(0.0, filter.sample(doubleArrayOf(STANDARD_GRAVITY, 0.0, 0.0), 2_000_000_000)!!, 1e-9)
@@ -27,11 +27,11 @@ class InertialTest {
     @Test fun invalidMountAndUncalibratedSensorGiveNoMeasurement() {
         val filter = InertialFilter()
         assertNull(filter.sample(doubleArrayOf(0.0, 0.0, -1.0), 1))
-        assertFalse(filter.calibrate(doubleArrayOf(0.0, 0.0, 1.0)))
+        assertFalse(filter.calibrate(doubleArrayOf(0.0, 0.0, 0.0)))
     }
     @Test fun filterAttenuatesShortImpulseAndResetClearsHistory() {
         val filter = InertialFilter()
-        filter.calibrate(doubleArrayOf(0.0, 1.0, 0.0))
+        filter.calibrate(doubleArrayOf(0.0, 0.0, -1.0))
         filter.sample(doubleArrayOf(0.0, 0.0, 0.0), 1_000_000_000)
         val g = filter.sample(doubleArrayOf(0.0, 0.0, -STANDARD_GRAVITY), 1_020_000_000)!!
         assertTrue(g > 0 && g < 0.2)
