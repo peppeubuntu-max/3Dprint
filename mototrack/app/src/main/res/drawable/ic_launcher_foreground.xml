@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Motorcycle remains inside the adaptive icon safe zone. -->
+    <path android:fillColor="#00000000" android:strokeColor="#80E4B0"
+        android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M42,65 A9,9 0,1 1,24 65 A9,9 0,1 1,42 65 M84,65 A9,9 0,1 1,66 65 A9,9 0,1 1,84 65 M33,65 L43,49 L55,65 L33,65 M55,65 L65,48 L75,65 M43,49 L62,49 M61,39 L66,39 L70,49 M39,45 L48,45"/>
+    <path android:fillColor="#80E4B0"
+        android:pathData="M46,48 Q51,40 60,44 L65,49 L55,54 Z"/>
+    <!-- Short road markings echo the recorded route. -->
+    <path android:fillColor="#00000000" android:strokeColor="#80E4B0"
+        android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M30,35 L39,35 M25,42 L33,42"/>
+</vector>
