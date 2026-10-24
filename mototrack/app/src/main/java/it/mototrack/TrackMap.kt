@@ -77,7 +77,7 @@ private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPo
             points.zipWithNext().forEach { (a, b) ->
                 if (a.segment == b.segment) Polyline(points = listOf(a.position().latLng(), b.position().latLng()), color = Color(pathColor(b.speed)), width = 10f)
             }
-            target?.let { Marker(state = rememberUpdatedMarkerState(position = it.latLng()), title = if (follow) "Posizione attuale" else "Istante selezionato") }
+            target?.let { Marker(state = remember(it) { MarkerState(position = it.latLng()) }, title = if (follow) "Posizione attuale" else "Istante selezionato") }
         }
         if (!loaded && slow) Text("Mappa non caricata. Verifica la connessione o prova Mappa alternativa.",
             Modifier.align(Alignment.Center).background(MaterialTheme.colorScheme.surface).padding(12.dp))
