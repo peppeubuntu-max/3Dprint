@@ -98,9 +98,11 @@ Inclusi test JUnit per distanza, segmenti pausa, accelerazione/frenata,
 azzeramento angolare, scala colori, proiezione asse di marcia, conversione
 in G, filtro inerziale, picchi e struttura GPX con telemetria.
 
-**Build e test Android non eseguiti in questo ambiente:** SDK e Gradle non
-sono preinstallati e il proxy configurato rifiuta le connessioni necessarie
-al download. Il progetto non va considerato collaudato su dispositivo.
+**Build APK e test unitari completati con successo su GitHub Actions il
+24 ottobre 2026.** Esecuzione: https://github.com/peppeubuntu-max/3Dprint/actions/runs/40102489399
+Commit compilato: `800d3417ca5e72c9937f48df10835d3e44d618e0`.
+Il proxy locale non è utilizzabile; la compilazione è avvenuta sul runner cloud.
+APK debug per prove, non ancora collaudato su dispositivo reale.
 
 Prima dell'uso verificare su telefono: permessi negati/posizione approssimata,
 GPS spento o perso, assenza sensore, azzeramento e inclinazione sui due lati,
@@ -109,3 +111,37 @@ pausa/spostamento/ripresa, schermo spento per almeno 20 minuti, arresto processo
 e recupero, export GPX in un lettore esterno, spazio esaurito, giri lunghi.
 Per giri molto lunghi la persistenza JSON e le singole linee della mappa
 richiedono successiva ottimizzazione (database e rendering aggregato).
+
+
+## Versione 0.2: mappe e riproduzione del giro
+
+La posizione viene richiesta all'apertura dell'app, senza avviare un giro.
+Il listener è attivo solo quando la schermata è visibile. Dopo un rifiuto dei
+permessi è disponibile il collegamento alle impostazioni. La cache OSM usa
+le directory interne dell'app, senza permessi di archiviazione esterna.
+
+Nel dettaglio, lo slider seleziona il tempo trascorso dall'avvio del giro,
+comprese le pause. I pulsanti ±1 s permettono la selezione precisa. Si mostra
+il campione GPS più vicino entro 1 s e quello inerziale entro 200 ms; fuori
+soglia i valori sono assenti, senza interpolare le pause. Il marker segue il
+campione selezionato. Il pannello dei dettagli è scorrevole sui piccoli schermi.
+
+Google Maps è integrato ma viene attivato solo compilando con MAPS_API_KEY
+non vuota. Il workflow legge il secret GitHub omonimo. In sua assenza resta
+attiva OpenStreetMap, per avere una build utilizzabile senza credenziali.
+Con Google abilitato, il pulsante Mappa alternativa consente di usare OSM
+anche in caso di problemi di rete o autorizzazione Google.
+
+La chiave va creata in un progetto Google Cloud con Maps SDK for Android
+abilitato e account di fatturazione configurato secondo i requisiti Google.
+Limitarla all'API Maps SDK for Android e all'app Android `it.mototrack` con
+l'impronta SHA-1 del certificato di firma. Non va pubblicata nei sorgenti.
+La chiave è inclusa nell'APK e non è un segreto dell'utente finale: le
+restrizioni Android/API sono essenziali. Tutti i telefoni usano la stessa
+chiave; nessun inserimento manuale da parte di chi installa l'app.
+
+Per distribuzione e aggiornamenti occorre una chiave di firma persistente,
+conservata privatamente. Gli attuali runner generano certificati debug
+indipendenti: questo APK può richiedere di disinstallare la vecchia build.
+Esportare prima i giri in GPX: la disinstallazione rimuove i dati locali.
+Non usare la firma debug temporanea per una distribuzione definitiva.

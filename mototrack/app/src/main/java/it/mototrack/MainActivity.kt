@@ -11,6 +11,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import kotlin.math.roundToLong
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
@@ -47,7 +51,12 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Configuration.getInstance().userAgentValue = "it.mototrack/0.1 Android"
+        Configuration.getInstance().apply {
+            load(applicationContext, getSharedPreferences("map", MODE_PRIVATE))
+            userAgentValue = "it.mototrack/0.2 Android"
+            osmdroidBasePath = java.io.File(filesDir, "osmdroid").apply { mkdirs() }
+            osmdroidTileCache = java.io.File(cacheDir, "map-tiles").apply { mkdirs() }
+        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF80E4B0), background = Color(0xFF101815), surface = Color(0xFF19251F))) {
                 Surface(Modifier.fillMaxSize()) { MotoTrack() }
@@ -55,9 +64,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-private fun number(v: Double?, suffix: String) = v?.let { String.format(Locale.ITALY, if (suffix == "G") "%.2f %s" else "%.1f %s", it, suffix) } ?: "—"
-private fun date(id: Long) = DateTimeFormatter.ofPattern("dd MMM yyyy • HH:mm", Locale.ITALY).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(id))
-private fun duration(ms: Long): String = "%02d:%02d:%02d".format(ms / 3600000, ms / 60000 % 60, ms / 1000 % 60)
+internal fun number(v: Double?, suffix: String) = v?.let { String.format(Locale.ITALY, if (suffix == "G") "%.2f %s" else "%.1f %s", it, suffix) } ?: "—"
+internal fun date(id: Long) = DateTimeFormatter.ofPattern("dd MMM yyyy • HH:mm", Locale.ITALY).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(id))
+internal fun duration(ms: Long): String = "%02d:%02d:%02d".format(ms / 3600000, ms / 60000 % 60, ms / 1000 % 60)
 
 @Composable
 private fun MotoTrack() {
@@ -69,6 +78,17 @@ private fun MotoTrack() {
     var selected by remember { mutableStateOf<Ride?>(null) }
     var export by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var locationGranted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
+    var startAfterPermission by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) locationGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val preview = rememberPreviewLocation(locationGranted, tab == 0)
     fun command(action: String) {
         val intent = Intent(context, TrackingService::class.java).setAction(action)
         if (action == TrackingService.START) ContextCompat.startForegroundService(context, intent)
@@ -86,8 +106,13 @@ private fun MotoTrack() {
     }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            notice = null; command(TrackingService.START)
-        } else notice = "Serve la posizione precisa. Abilitala nelle impostazioni dei permessi dell’app."
+            locationGranted = true; notice = null
+            if (startAfterPermission) command(TrackingService.START)
+        } else { locationGranted = false; notice = "Serve la posizione precisa. Abilitala nelle impostazioni dei permessi dell’app." }
+        startAfterPermission = false
+    }
+    LaunchedEffect(Unit) {
+        if (!locationGranted) permissions.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
     LaunchedEffect(tab, state.mode) {
         if (tab == 1) {
@@ -104,10 +129,16 @@ private fun MotoTrack() {
             TextButton(onClick = { tab = 1 - tab; selected = null }) { Text(if (tab == 0) "Giri →" else "← Registra") }
         }
         if (tab == 0) {
-            TrackMap(state.ride?.points.orEmpty(), true, Modifier.weight(1f).fillMaxWidth())
+            TrackMap(state.ride?.points.orEmpty(), true, Modifier.weight(1f).fillMaxWidth(),
+                current = preview?.let { MapPosition(it.latitude, it.longitude) })
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("● 0   🟡 60   🔴 120+ km/h · grigio: dato assente", style = MaterialTheme.typography.labelSmall)
-                Text(notice ?: state.message, color = MaterialTheme.colorScheme.primary)
+                Text(notice ?: if (state.mode == Mode.IDLE) {
+                    if (preview == null) "Attendo la posizione: verifica che il GPS sia attivo" else "Posizione disponibile • pronto per partire"
+                } else state.message, color = MaterialTheme.colorScheme.primary)
+                if (!locationGranted) TextButton(onClick = {
+                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${context.packageName}")))
+                }) { Text("Abilita posizione nelle impostazioni") }
                 val fresh = state.mode == Mode.RECORDING && state.lastFixElapsed > 0 && SystemClock.elapsedRealtime() - state.lastFixElapsed < 5000
                 val p = state.ride?.points?.lastOrNull().takeIf { fresh }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -118,6 +149,7 @@ private fun MotoTrack() {
                 Text("${duration(state.ride?.activeMillis ?: 0)}  •  ${number((state.ride?.distanceMeters ?: 0.0) / 1000, "km")}")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.mode == Mode.IDLE) Button(modifier = Modifier.weight(1f), onClick = {
+                        startAfterPermission = true
                         val required = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
                         if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.POST_NOTIFICATIONS)
                         permissions.launch(required.toTypedArray())
@@ -141,8 +173,27 @@ private fun MotoTrack() {
             if (detail != null) {
                 TextButton(onClick = { selected = null }) { Text("← Tutti i giri") }
                 Text(date(detail.id), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
-                TrackMap(detail.points, false, Modifier.weight(1f).fillMaxWidth())
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                var second by remember(detail.id) { mutableLongStateOf(0L) }
+                val lastSecond = remember(detail) { ((detail.timelineEnd() - detail.id + 999) / 1000).coerceAtLeast(0) }
+                val playback = remember(detail, second) { detail.playback(second) }
+                TrackMap(detail.points, false, Modifier.weight(1f).fillMaxWidth(),
+                    selected = playback.point?.let { MapPosition(it.lat, it.lon) })
+                Column(Modifier.fillMaxWidth().heightIn(max = 370.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Esplora il giro • ${duration(second * 1000)} / ${duration(lastSecond * 1000)}")
+                    Slider(value = second.toFloat(), onValueChange = { second = it.roundToLong().coerceIn(0, lastSecond) },
+                        valueRange = 0f..lastSecond.coerceAtLeast(1).toFloat(), enabled = lastSecond > 0)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = { second = (second - 1).coerceAtLeast(0) }, enabled = second > 0) { Text("−1 s") }
+                        TextButton(onClick = { second = (second + 1).coerceAtMost(lastSecond) }, enabled = second < lastSecond) { Text("+1 s") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Metric("VELOCITÀ", number(playback.point?.speed?.times(3.6), "km/h"))
+                        Metric("PIEGA ≈", number(playback.point?.lean, "°"))
+                        Metric("ACCEL.", number(playback.accelerationG, "G"))
+                    }
+                    Text(if (playback.point == null && playback.accelerationG == null) "Pausa o dati non disponibili in questo istante"
+                        else "Campione più vicino • G: ${if (playback.source == "sensor") "sensore" else "stima GPS"}", style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
                     Text(if (detail.ended == null) "Traccia recuperata da una registrazione interrotta" else "Giro completato")
                     Text("${number(detail.distanceMeters / 1000, "km")} • ${duration(detail.activeMillis)} attivi")
                     Text("Velocità massima: ${number(detail.maxSpeed?.times(3.6), "km/h")}")
@@ -154,7 +205,7 @@ private fun MotoTrack() {
                     Button(modifier = Modifier.fillMaxWidth(), onClick = {
                         export = detail.gpx(); save.launch("MotoTrack-${detail.id}.gpx")
                     }) { Text("Scarica GPX con telemetria") }
-                    Text("Tocca un punto sulla mappa per i dati tecnici. Colori: verde 0, giallo 60, rosso ≥120 km/h.", style = MaterialTheme.typography.bodySmall)
+                    Text("Sposta lo slider per esplorare i dati secondo per secondo. Colori: verde 0, giallo 60, rosso ≥120 km/h.", style = MaterialTheme.typography.bodySmall)
                 }
             } else {
                 Text("I tuoi giri", Modifier.padding(16.dp), style = MaterialTheme.typography.headlineMedium)
@@ -179,48 +230,5 @@ private fun Metric(label: String, value: String) {
     Column {
         Text(label, style = MaterialTheme.typography.labelSmall)
         Text(value, style = MaterialTheme.typography.titleMedium)
-    }
-}
-@Composable
-private fun TrackMap(points: List<Sample>, follow: Boolean, modifier: Modifier) {
-    val context = LocalContext.current
-    val owner = LocalLifecycleOwner.current
-    val map = remember { MapView(context).apply {
-        setTileSource(TileSourceFactory.MAPNIK); setMultiTouchControls(true)
-        controller.setZoom(6.0); controller.setCenter(GeoPoint(42.5, 12.5))
-        minZoomLevel = 3.0; maxZoomLevel = 19.0
-    } }
-    DisposableEffect(map, owner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) map.onResume()
-            if (event == Lifecycle.Event.ON_PAUSE) map.onPause()
-        }
-        owner.lifecycle.addObserver(observer); map.onResume()
-        onDispose { owner.lifecycle.removeObserver(observer); map.onPause(); map.onDetach() }
-    }
-    LaunchedEffect(points, follow) {
-        map.overlays.clear()
-        points.zipWithNext().forEach { (a, b) ->
-            if (a.segment == b.segment) map.overlays.add(Polyline(map).apply {
-                setPoints(listOf(GeoPoint(a.lat, a.lon), GeoPoint(b.lat, b.lon)))
-                outlinePaint.strokeWidth = 10f
-                outlinePaint.color = b.speed?.let { android.graphics.Color.HSVToColor(floatArrayOf(speedHue(it), 0.85f, 0.9f)) } ?: android.graphics.Color.GRAY
-                title = "${number(b.speed?.times(3.6), "km/h")} • piega ${number(b.lean, "°")} • ${number(b.acceleration?.div(STANDARD_GRAVITY), "G")}"
-                snippet = "${if (b.accelerationSource == "sensor") "Sensore" else "Stima GPS"} • ${date(b.time)} • precisione ±${b.accuracy.toInt()} m"
-            })
-        }
-        points.lastOrNull()?.let { p ->
-            map.overlays.add(Marker(map).apply { position = GeoPoint(p.lat, p.lon); title = if (follow) "Ultima posizione GPS" else "Arrivo" })
-            if (follow) { map.controller.setZoom(16.0); map.controller.animateTo(GeoPoint(p.lat, p.lon)) }
-            else map.post {
-                if (points.size > 1) map.zoomToBoundingBox(BoundingBox.fromGeoPoints(points.map { GeoPoint(it.lat, it.lon) }), false, 70)
-                else { map.controller.setZoom(16.0); map.controller.setCenter(GeoPoint(p.lat, p.lon)) }
-            }
-        }
-        map.invalidate()
-    }
-    Box(modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(24.dp))) {
-        AndroidView(factory = { map }, modifier = Modifier.fillMaxSize())
-        Text("© OpenStreetMap contributors", Modifier.background(Color(0xDD101815)).padding(4.dp), style = MaterialTheme.typography.labelSmall)
     }
 }

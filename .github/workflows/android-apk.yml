@@ -35,6 +35,8 @@ jobs:
       - name: Install Android SDK
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Test and build installable debug APK
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: gradle --no-daemon testDebugUnitTest assembleDebug
       - name: Save APK
         uses: actions/upload-artifact@v4
