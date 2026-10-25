@@ -17,6 +17,9 @@ enum class Mode { IDLE, RECORDING, PAUSED }
 data class TrackingState(
     val mode: Mode = Mode.IDLE, val ride: Ride? = null, val lean: Double? = null,
     val accelerationG: Double? = null, val accelerationSource: String = "gps",
+    val calibrationActive: Boolean = false, val calibrationStep: CalibrationStep = CalibrationStep.UPRIGHT,
+    val calibrationDegrees: Double? = null, val calibrationProgress: Float = 0f,
+    val calibrationCanConfirm: Boolean = false, val orientationAvailable: Boolean = false,
     val awaitingRightLean: Boolean = false, val calibrationHint: String = "Calibra a moto ferma: prima verticale, poi leggermente a destra.",
     val sensorAvailable: Boolean = false, val calibrated: Boolean = false, val message: String = "Pronto per un nuovo giro", val lastFixElapsed: Long = 0
 )
@@ -25,6 +28,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         private val mutable = MutableStateFlow(TrackingState())
         val state = mutable.asStateFlow()
         const val START = "start"; const val PAUSE = "pause"; const val RESUME = "resume"
+        const val BEGIN_CALIBRATION = "begin_calibration"; const val CONFIRM_CALIBRATION = "confirm_calibration"; const val CANCEL_CALIBRATION = "cancel_calibration"
         const val STOP = "stop"; const val ZERO = "zero"; const val CONFIRM_RIGHT = "confirm_right"
     }
     private lateinit var locations: LocationManager
@@ -37,30 +41,56 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     private var segment = 0
     private var activeStart = 0L
     private var accumulated = 0L
-    private val mount = MountCalibration()
-    private var gyroMagnitude = Double.POSITIVE_INFINITY
-    private var lastGyroNanos = 0L
-    private var stableSince = 0L
-    private var lastUp: DoubleArray? = null
-    private var lastUpNanos = 0L
-    private fun calibrationIsStationary(): Boolean {
-        val now = SystemClock.elapsedRealtimeNanos()
-        val orientationFresh = now - lastUpNanos in 0..500_000_000L
-        val gyroFresh = now - lastGyroNanos in 0..500_000_000L
-        val movingGps = mutable.value.lastFixElapsed > 0 &&
-            SystemClock.elapsedRealtime() - mutable.value.lastFixElapsed < 3000 &&
-            (ride?.points?.lastOrNull()?.speed ?: 0.0) > 1.0
-        return orientationFresh && gyroFresh && gyroMagnitude < 0.05 &&
-            stableSince > 0 && now - stableSince >= 1_000_000_000L && !movingGps
-    }
+    private val telemetry = CalibratedTelemetry()
+    private var guide: CalibrationGuide? = null
+    private var resumeAfterCalibration = false
+    private var rotationType = Sensor.TYPE_ROTATION_VECTOR
     private var lastSensor = 0L
-    private val inertialFilter = InertialFilter()
+    private var lastUpNanos = 0L
+    private var lastKnownSpeed = 0.0
+    private var lastKnownSpeedNanos = 0L
+    private fun moving() = SystemClock.elapsedRealtimeNanos() - lastKnownSpeedNanos < 3_000_000_000L && lastKnownSpeed > 2.0
+    private fun publishCalibration() {
+        val session = guide ?: return
+        val reading = session.reading(SystemClock.elapsedRealtimeNanos(), moving())
+        val hint = when {
+            !mutable.value.orientationAvailable -> "Sensore di orientamento non disponibile sul telefono."
+            !reading.fresh -> "Attendo i dati del sensore…"
+            moving() -> "Ferma la moto prima di calibrare."
+            reading.progress < 1f -> "Mantieni la posizione: riempimento della barra di stabilità."
+            !reading.canConfirm && session.step == CalibrationStep.RIGHT -> "Inclina verso destra tra 5° e 30°."
+            !reading.canConfirm && session.step == CalibrationStep.RETURN -> "Riporta la moto verticale: l’angolo deve essere vicino a 0°."
+            else -> "Posizione stabile: puoi confermare."
+        }
+        mutable.value = mutable.value.copy(calibrationStep = session.step, calibrationDegrees = reading.degrees,
+            calibrationProgress = reading.progress, calibrationCanConfirm = reading.canConfirm,
+            awaitingRightLean = session.step == CalibrationStep.RIGHT, calibrationHint = hint)
+    }
+    private fun pauseRecording(keepLocation: Boolean = false) {
+        accumulated = elapsed(); if (!keepLocation) locations.removeUpdates(this); resetAcceleration()
+        ride = ride?.copy(activeMillis = accumulated)
+        mutable.value = mutable.value.copy(mode = Mode.PAUSED, ride = ride, message = "In pausa")
+        checkpoint(); notifyState()
+    }
+    private fun resumeRecording() {
+        resetAcceleration(); segment++; activeStart = SystemClock.elapsedRealtime(); lastLocationNanos = 0
+        mutable.value = mutable.value.copy(mode = Mode.RECORDING, message = "Attendo il GPS", lastFixElapsed = 0)
+        requestLocations(); notifyState()
+    }
+    private fun endCalibration() {
+        guide = null
+        mutable.value = mutable.value.copy(calibrationActive = false, calibrated = telemetry.ready, awaitingRightLean = false)
+        resetAcceleration()
+        if (resumeAfterCalibration && mutable.value.mode == Mode.PAUSED) resumeRecording()
+        else locations.removeUpdates(this)
+        resumeAfterCalibration = false
+    }
     private var up: DoubleArray? = null
     private var lastInertialNanos = 0L
     private var lastInertialStored = 0L
     private var latestG: Double? = null
     private fun resetAcceleration() {
-        inertialFilter.reset(); latestG = null; lastInertialNanos = 0; lastInertialStored = 0
+        telemetry.resetStream(); latestG = null; lastInertialNanos = 0; lastInertialStored = 0
         mutable.value = mutable.value.copy(accelerationG = null)
     }
     private var lastLocationNanos = 0L
@@ -75,6 +105,8 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
                 }
                 mutable.value = mutable.value.copy(ride = ride)
             }
+            if (SystemClock.elapsedRealtimeNanos() - lastUpNanos > 1_000_000_000L) mutable.value = mutable.value.copy(lean = null)
+            publishCalibration()
             handler.postDelayed(this, 1000)
         }
     }
@@ -92,33 +124,29 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         if (saving) return START_NOT_STICKY
         when (intent?.action) {
             START -> if (mutable.value.mode == Mode.IDLE) startRide()
-            PAUSE -> if (mutable.value.mode == Mode.RECORDING) {
-                accumulated = elapsed(); locations.removeUpdates(this); resetAcceleration()
-                ride = ride?.copy(activeMillis = accumulated)
-                mutable.value = mutable.value.copy(mode = Mode.PAUSED, ride = ride, message = "In pausa")
-                checkpoint(); notifyState()
+            PAUSE -> if (mutable.value.mode == Mode.RECORDING) pauseRecording()
+            RESUME -> if (mutable.value.mode == Mode.PAUSED && guide == null) resumeRecording()
+            BEGIN_CALIBRATION -> if (ride != null) {
+                if (guide == null) {
+                    resumeAfterCalibration = mutable.value.mode == Mode.RECORDING
+                    if (resumeAfterCalibration) pauseRecording(keepLocation = true)
+                }
+                guide = CalibrationGuide()
+                requestLocations()
+                mutable.value = mutable.value.copy(calibrationActive = true, calibrationStep = CalibrationStep.UPRIGHT,
+                    calibrationDegrees = null, calibrationCanConfirm = false, calibrationProgress = 0f)
+                publishCalibration()
             }
-            RESUME -> if (mutable.value.mode == Mode.PAUSED) {
-                resetAcceleration(); segment++; activeStart = SystemClock.elapsedRealtime(); lastLocationNanos = 0
-                mutable.value = mutable.value.copy(mode = Mode.RECORDING, message = "Attendo il GPS", lastFixElapsed = 0)
-                requestLocations(); notifyState()
+            CONFIRM_CALIBRATION -> {
+                val result = guide?.confirm(SystemClock.elapsedRealtimeNanos(), moving())
+                if (result != null) {
+                    telemetry.apply(result)
+                    mutable.value = mutable.value.copy(calibrated = true, calibrationStep = CalibrationStep.DONE,
+                        calibrationDegrees = 0.0, lean = up?.let { telemetry.lean(it) }, calibrationHint = "Zero verificato. Calibrazione applicata alla registrazione.")
+                    endCalibration()
+                } else publishCalibration()
             }
-            ZERO -> {
-                val direction = up
-                if (direction != null && calibrationIsStationary() && mount.zero(direction)) {
-                    inertialFilter.clear(); resetAcceleration()
-                    mutable.value = mutable.value.copy(calibrated = false, awaitingRightLean = true, lean = null,
-                        calibrationHint = "1/2 Zero acquisito. Inclina leggermente la moto a destra (5–30°), tienila ferma e conferma.")
-                } else mutable.value = mutable.value.copy(calibrationHint = "Moto ferma e verticale: attendi un secondo senza muoverla. Servono orientamento e giroscopio.")
-            }
-            CONFIRM_RIGHT -> {
-                val direction = up
-                if (mutable.value.awaitingRightLean && direction != null && calibrationIsStationary() && mount.confirmRight(direction)) {
-                    inertialFilter.calibrate(mount.forward!!); resetAcceleration()
-                    mutable.value = mutable.value.copy(calibrated = true, awaitingRightLean = false, lean = mount.lean(direction),
-                        calibrationHint = "Calibrazione completa. Riporta la moto verticale. Ripeti se sposti il telefono.")
-                } else mutable.value = mutable.value.copy(calibrationHint = "Tieni ferma la moto inclinata a destra tra 5° e 30°, poi conferma. Per ripartire usa Ripeti zero.")
-            }
+            CANCEL_CALIBRATION -> if (guide != null) endCalibration()
             STOP -> stopRide()
         }
         return START_NOT_STICKY
@@ -132,15 +160,13 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         accumulated = 0; segment = 0; activeStart = SystemClock.elapsedRealtime()
         mutable.value = TrackingState(Mode.RECORDING, ride, message = "Attendo il GPS")
         startForeground(1, notification())
-        val sensor = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        if (sensor != null) sensors.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
-        else mutable.value = mutable.value.copy(message = "Sensore di orientamento non disponibile")
-        sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
-            sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-        }
+        val sensor = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val orientationRegistered = sensor != null && sensors.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
+        rotationType = sensor?.type ?: Sensor.TYPE_ROTATION_VECTOR
         val linear = sensors.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
-        val available = linear != null && sensor != null && sensors.registerListener(this, linear, SensorManager.SENSOR_DELAY_GAME)
-        mutable.value = mutable.value.copy(sensorAvailable = available)
+        val available = linear != null && orientationRegistered && sensors.registerListener(this, linear, SensorManager.SENSOR_DELAY_GAME)
+        mutable.value = mutable.value.copy(sensorAvailable = available, orientationAvailable = orientationRegistered)
         requestLocations(); checkpoint()
     }
     private fun requestLocations() {
@@ -157,6 +183,11 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     }
     private fun elapsed() = accumulated + (SystemClock.elapsedRealtime() - activeStart).coerceAtLeast(0)
     override fun onLocationChanged(location: Location) {
+        val speedAge = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
+        if (speedAge in 0..3_000_000_000L && location.hasSpeed() &&
+            (!location.hasSpeedAccuracy() || location.speedAccuracyMetersPerSecond <= 1.5f)) {
+            lastKnownSpeed = location.speed.toDouble(); lastKnownSpeedNanos = location.elapsedRealtimeNanos
+        }
         if (mutable.value.mode != Mode.RECORDING) return
         if (!location.hasAccuracy() || location.accuracy > 30 || location.accuracy <= 0) return
         val age = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
@@ -182,15 +213,13 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     override fun onProviderDisabled(provider: String) { mutable.value = mutable.value.copy(message = "GPS disattivato: abilita la posizione") }
     override fun onProviderEnabled(provider: String) { mutable.value = mutable.value.copy(message = "Attendo il GPS") }
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-            gyroMagnitude = sqrt(event.values.take(3).sumOf { it.toDouble() * it })
-            lastGyroNanos = event.timestamp
-            if (gyroMagnitude >= 0.05) stableSince = 0
-            return
-        }
         if (event.sensor.type == Sensor.TYPE_LINEAR_ACCELERATION) {
-            if (mutable.value.mode != Mode.RECORDING || saving) return
-            val g = inertialFilter.sample(DoubleArray(3) { event.values[it].toDouble() }, event.timestamp) ?: return
+            if (SystemClock.elapsedRealtimeNanos() - event.timestamp !in 0..500_000_000L) return
+            val linear = DoubleArray(3) { event.values[it].toDouble() }
+            guide?.acceleration(linear, event.timestamp)
+            if (mutable.value.mode != Mode.RECORDING || saving || guide != null) return
+            if (event.timestamp - lastUpNanos !in -100_000_000L..1_000_000_000L) return
+            val g = telemetry.acceleration(linear, event.timestamp) ?: return
             latestG = g; lastInertialNanos = event.timestamp
             if (event.timestamp - lastInertialStored >= 100_000_000L) {
                 lastInertialStored = event.timestamp
@@ -201,21 +230,18 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
             }
             return
         }
-        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
+        if (event.sensor.type != rotationType) return
         val matrix = FloatArray(9)
         SensorManager.getRotationMatrixFromVector(matrix, event.values)
         up = doubleArrayOf(matrix[6].toDouble(), matrix[7].toDouble(), matrix[8].toDouble())
         val direction = up!!
-        val previous = lastUp
-        val gap = event.timestamp - lastUpNanos
-        val drift = previous?.let { acos(dot(it, direction).coerceIn(-1.0, 1.0)) } ?: Double.POSITIVE_INFINITY
-        if (gap > 500_000_000L || drift > 0.015 || gyroMagnitude >= 0.05) stableSince = 0
-        else if (stableSince == 0L) stableSince = event.timestamp
-        lastUp = direction; lastUpNanos = event.timestamp
+        lastUpNanos = event.timestamp
+        guide?.orientation(direction, event.timestamp)
         val now = SystemClock.elapsedRealtime()
         if (now - lastSensor < 100) return
         lastSensor = now
-        mutable.value = mutable.value.copy(lean = mount.lean(direction))
+        mutable.value = mutable.value.copy(lean = telemetry.lean(direction))
+        publishCalibration()
     }
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     private fun checkpoint() {
@@ -229,6 +255,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     private fun stopRide() {
         val r = ride ?: return
         saving = true
+        guide = null; resumeAfterCalibration = false
         val time = if (mutable.value.mode == Mode.RECORDING) elapsed() else accumulated
         accumulated = time
         locations.removeUpdates(this); sensors.unregisterListener(this)

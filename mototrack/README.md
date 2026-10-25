@@ -172,3 +172,41 @@ almeno 56 dp, navigazione con Indietro, etichette per lettori di schermo,
 sezione e giro selezionato conservati durante la ricreazione dell'attività.
 Archivio con stato di caricamento, errore/riprova e stato vuoto con accesso a
 Registra. Il dettaglio scorre per rendere accessibili slider e dati su schermi piccoli.
+
+
+## Versione 0.5: calibrazione visuale e applicazione alla registrazione
+
+Aprire Calibra sensori dopo l'avvio. Il giro viene messo temporaneamente in
+pausa: i movimenti della calibrazione non producono punti GPS o campioni G.
+La procedura mostra una moto vista da dietro, un valore angolare e la barra
+di stabilità. Si riutilizza la calibrazione precedente se si annulla.
+
+1. Moto verticale e ferma, manubrio dritto. Il numero iniziale è l'assetto del
+   telefono (angolo della normale allo schermo rispetto alla verticale),
+   NON la piega della moto. Attendere la barra e premere Imposta questa posizione a 0°.
+2. Inclinare la moto a destra tra 5° e 30° senza sterzare. Il numero ora è
+   l'angolo rispetto allo zero acquisito. Confermare quando stabile.
+3. Riportare la moto verticale. Entro ±3° di piega e 4° di scarto complessivo
+   dalla posizione iniziale, confermare Verifica e applica lo zero.
+4. La guida mostra zero impostato e piega live. Il giro riprende se era in
+   registrazione; resta in pausa se lo era già prima della procedura.
+
+Il riferimento finale usa una media delle letture stabili; anche l'eventuale
+bias dell'accelerazione lineare da fermo viene sottratto alle successive
+misure. La finestra richiede almeno 0,8 s, scarto massimo di 2,5° dalla media,
+assenza di accelerazioni lineari superiori a 0,8 m/s² (quando disponibili) e
+assenza di movimento GPS noto oltre 2 m/s. I dati scaduti non abilitano la
+conferma. Non si richiede più un flusso separato dal giroscopio: viene usato
+GAME_ROTATION_VECTOR, oppure ROTATION_VECTOR se il primo non è disponibile.
+
+Una sessione provvisoria non sostituisce la calibrazione attiva finché tutte
+le verifiche non sono complete. Pausa e ripresa azzerano solo il filtro
+transitorio, mantenendo gli assi e il bias. I valori live e quelli salvati
+usano lo stesso motore CalibratedTelemetry; GPS e GPX conservano le unità
+precedenti. Test automatici coprono tremore, gradi live, zero finale, scadenza,
+movimento, annullamento e applicazione dei valori al riepilogo e al GPX dopo
+il reset del filtro. Non sostituiscono una prova fisica su telefono e moto.
+
+Questa procedura sostituisce le istruzioni della calibrazione in due passaggi
+nelle sezioni delle versioni precedenti. Calibrare in sicurezza a moto ferma,
+con sostegno adeguato, senza inclinare il telefono rispetto al supporto.

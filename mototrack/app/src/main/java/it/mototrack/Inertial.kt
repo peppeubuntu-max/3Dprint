@@ -35,6 +35,14 @@ class MountCalibration {
         right = unit(cross(f, upright))
         return right != null
     }
+    fun relevel(gravityDirection: DoubleArray): Boolean {
+        val newUp = unit(gravityDirection) ?: return false
+        val oldForward = forward ?: return false
+        val projection = dot(oldForward, newUp)
+        val f = unit(DoubleArray(3) { oldForward[it] - projection * newUp[it] }) ?: return false
+        up = newUp; forward = f; right = unit(cross(f, newUp))
+        return right != null
+    }
     fun lean(gravityDirection: DoubleArray): Double? {
         val upright = up ?: return null
         val r = right ?: return null

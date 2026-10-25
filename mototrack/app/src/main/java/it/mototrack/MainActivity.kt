@@ -187,7 +187,10 @@ private fun MotoTrack() {
                                     onClick = { command(TrackingService.STOP) }) { Text(if (saving) "Salvataggio…" else "Stop e salva") }
                             }
                         }
-                        if (state.mode != Mode.IDLE) TextButton(enabled = state.message != "Salvataggio…", onClick = { showCalibration = true }) {
+                        if (state.mode != Mode.IDLE) TextButton(enabled = state.message != "Salvataggio…", onClick = {
+                            if (!state.calibrationActive) command(TrackingService.BEGIN_CALIBRATION)
+                            showCalibration = true
+                        }) {
                             Text(if (state.calibrated) "Sensori calibrati · Ricalibra" else "Calibra sensori")
                         }
                     }
@@ -310,18 +313,13 @@ private fun MotoTrack() {
             }
         }
     }
-    if (showCalibration && state.mode != Mode.IDLE) AlertDialog(
-        onDismissRequest = { showCalibration = false },
-        title = { Text(if (state.calibrated) "Sensori calibrati" else if (state.awaitingRightLean) "2 di 2 · Inclina a destra" else "1 di 2 · Moto verticale") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(state.calibrationHint)
-            if (!state.calibrated && !state.awaitingRightLean) Text("Moto ferma, manubrio dritto. Mantieni la posizione per un secondo.")
-            if (state.awaitingRightLean) TextButton(onClick = { command(TrackingService.ZERO) }) { Text("Ripeti zero a moto verticale") }
-        } },
-        confirmButton = { TextButton(onClick = {
-            command(if (state.awaitingRightLean) TrackingService.CONFIRM_RIGHT else TrackingService.ZERO)
-        }) { Text(if (state.calibrated) "Ricalibra" else if (state.awaitingRightLean) "Conferma" else "Imposta zero") } },
-        dismissButton = { TextButton(onClick = { showCalibration = false }) { Text("Chiudi") } })
+    if (showCalibration && state.mode != Mode.IDLE) CalibrationDialog(state,
+        onConfirm = { command(TrackingService.CONFIRM_CALIBRATION) },
+        onRestart = { command(TrackingService.BEGIN_CALIBRATION) },
+        onClose = {
+            if (state.calibrationActive) command(TrackingService.CANCEL_CALIBRATION)
+            showCalibration = false
+        })
 }
 
 @Composable
