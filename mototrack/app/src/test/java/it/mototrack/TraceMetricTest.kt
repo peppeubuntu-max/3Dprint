@@ -10,8 +10,14 @@ class TraceMetricTest {
         TraceMetric.entries.forEach { assertEquals(120f, traceHue(point, it)!!, 0.001f) }
         assertEquals(60f, traceHue(point.copy(speed = 60.0 / 3.6), TraceMetric.SPEED)!!, 0.001f)
         assertEquals(0f, traceHue(point.copy(speed = 150.0 / 3.6), TraceMetric.SPEED)!!, 0.001f)
-        assertEquals(0f, traceHue(point.copy(lean = 60.0), TraceMetric.LEAN)!!, 0.001f)
+        assertEquals(0f, traceHue(point.copy(lean = 45.0), TraceMetric.LEAN)!!, 0.001f)
         assertEquals(0f, traceHue(point.copy(acceleration = STANDARD_GRAVITY), TraceMetric.ACCELERATION)!!, 0.001f)
+    }
+
+    @Test fun leanMidpointAndAbove45Degrees() {
+        assertEquals(60f, traceHue(point.copy(lean = 22.5), TraceMetric.LEAN)!!, 0.001f)
+        assertEquals(0f, traceHue(point.copy(lean = -45.0), TraceMetric.LEAN)!!, 0.001f)
+        assertEquals(0f, traceHue(point.copy(lean = 60.0), TraceMetric.LEAN)!!, 0.001f)
     }
 
     @Test fun bothLeanDirectionsAndBrakingUseMagnitude() {

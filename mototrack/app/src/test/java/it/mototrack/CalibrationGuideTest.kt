@@ -40,7 +40,7 @@ class CalibrationGuideTest {
         val guide = CalibrationGuide()
         var time = hold(guide, 1_000_000_000L, 0.0)
         guide.confirm(time)
-        time = hold(guide, time + 20_000_000L, 15.0)
+        time = hold(guide, time + 20_000_000L, 2.0)
         guide.confirm(time)
         time = hold(guide, time + 20_000_000L, 0.0, bias = 0.1)
         return guide.confirm(time)!!
@@ -83,9 +83,9 @@ class CalibrationGuideTest {
     @Test fun wrongRightAngleAndIncompleteReturnAreRejected() {
         val guide = CalibrationGuide()
         var time = hold(guide, 1_000_000_000L, 0.0); guide.confirm(time)
-        time = hold(guide, time + 20_000_000L, 2.0)
+        time = hold(guide, time + 20_000_000L, 1.5)
         assertFalse(guide.reading(time).canConfirm)
-        time = hold(guide, time + 20_000_000L, 15.0); guide.confirm(time)
+        time = hold(guide, time + 20_000_000L, 2.0); guide.confirm(time)
         time = hold(guide, time + 20_000_000L, 8.0)
         assertFalse(guide.reading(time).canConfirm)
         assertNull(guide.confirm(time))

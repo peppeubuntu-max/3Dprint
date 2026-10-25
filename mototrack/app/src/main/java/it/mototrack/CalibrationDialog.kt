@@ -31,7 +31,7 @@ fun CalibrationDialog(state: TrackingState, onConfirm: () -> Unit, onRestart: ()
     }
     val instruction = when (step) {
         CalibrationStep.UPRIGHT -> "Da fermo, manubrio dritto. Questa posizione diventerà lo zero della moto."
-        CalibrationStep.RIGHT -> "Inclina solo verso destra, tra 5° e 30°. Mantieni la moto ferma, aiutandoti se necessario."
+        CalibrationStep.RIGHT -> "Inclina leggermente verso destra: bastano 2–3°. Mantieni la moto ferma, aiutandoti se necessario."
         CalibrationStep.RETURN -> "Riporta la moto verticale. Conferma quando leggi un valore vicino a 0°."
         CalibrationStep.DONE -> "Piega e accelerazione sono applicate al giro. Muovendo la moto, i gradi qui sotto si aggiornano."
     }

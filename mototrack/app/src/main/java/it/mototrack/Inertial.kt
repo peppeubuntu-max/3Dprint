@@ -3,6 +3,7 @@ package it.mototrack
 import kotlin.math.*
 
 const val STANDARD_GRAVITY = 9.80665
+internal fun validCalibrationTilt(degrees: Double) = degrees.isFinite() && degrees >= 2.0 - 1e-9 && degrees <= 30.0 + 1e-9
 internal fun dot(a: DoubleArray, b: DoubleArray) = a.indices.sumOf { a[it] * b[it] }
 internal fun cross(a: DoubleArray, b: DoubleArray) = doubleArrayOf(
     a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
@@ -29,7 +30,7 @@ class MountCalibration {
         val upright = up ?: return false
         val tilted = unit(gravityDirection) ?: return false
         val degrees = Math.toDegrees(acos(dot(upright, tilted).coerceIn(-1.0, 1.0)))
-        if (degrees !in 5.0..30.0) return false
+        if (!validCalibrationTilt(degrees)) return false
         val f = unit(cross(tilted, upright)) ?: return false
         forward = f
         right = unit(cross(f, upright))

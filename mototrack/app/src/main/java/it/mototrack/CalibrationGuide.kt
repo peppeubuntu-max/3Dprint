@@ -53,7 +53,7 @@ class CalibrationGuide {
         val stable = progress >= 1f
         val inRange = when (step) {
             CalibrationStep.UPRIGHT -> true
-            CalibrationStep.RIGHT -> degrees != null && degrees in 5.0..30.0
+            CalibrationStep.RIGHT -> degrees != null && validCalibrationTilt(degrees) && validCalibrationTilt(angle(mean, candidate.up!!))
             CalibrationStep.RETURN -> degrees != null && abs(degrees) <= 3.0 && angle(mean, candidate.up!!) <= 4.0
             CalibrationStep.DONE -> false
         }

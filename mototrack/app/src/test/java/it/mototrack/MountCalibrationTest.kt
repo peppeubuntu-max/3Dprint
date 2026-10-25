@@ -18,7 +18,7 @@ class MountCalibrationTest {
                     fun phone(v: DoubleArray) = mounted(v, x, y, z)
                     val mount = MountCalibration()
                     assertTrue(mount.zero(phone(doubleArrayOf(0.0, 0.0, 1.0))))
-                    val tilt = Math.toRadians(15.0)
+                    val tilt = Math.toRadians(2.0)
                     assertTrue(mount.confirmRight(phone(doubleArrayOf(-sin(tilt), 0.0, cos(tilt)))))
                     for (roll in listOf(-55.0, -20.0, 0.0, 20.0, 55.0)) {
                         val r = Math.toRadians(roll); val pitch = Math.toRadians(12.0)
