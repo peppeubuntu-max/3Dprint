@@ -234,14 +234,27 @@ private fun MotoTrack() {
                 } else {
                     val detail = selected
                     if (detail != null) {
+                        var traceMetric by rememberSaveable(detail.id) { mutableStateOf(TraceMetric.SPEED) }
                         var second by rememberSaveable(detail.id) { mutableLongStateOf(0L) }
                         val lastSecond = remember(detail) { ((detail.timelineEnd() - detail.id + 999) / 1000).coerceAtLeast(0) }
                         val playback = remember(detail, second) { detail.playback(second) }
                         LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             item { Text(date(detail.id), Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium) }
+                            item {
+                                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Colora la traccia per", style = MaterialTheme.typography.labelLarge)
+                                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                        TraceMetric.entries.forEachIndexed { index, metric ->
+                                            SegmentedButton(selected = traceMetric == metric, onClick = { traceMetric = metric },
+                                                shape = SegmentedButtonDefaults.itemShape(index, TraceMetric.entries.size),
+                                                icon = {}) { Text(metric.label, maxLines = 1) }
+                                        }
+                                    }
+                                }
+                            }
                             item { TrackMap(detail.points, false, Modifier.fillMaxWidth().height(280.dp),
-                                selected = playback.point?.let { MapPosition(it.lat, it.lon) }) }
+                                selected = playback.point?.let { MapPosition(it.lat, it.lon) }, metric = traceMetric) }
                             item {
                                 ElevatedCard(Modifier.padding(horizontal = 16.dp)) {
                                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

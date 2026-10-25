@@ -52,17 +52,17 @@ data class MapPosition(val lat: Double, val lon: Double)
 private fun Sample.position() = MapPosition(lat, lon)
 private fun MapPosition.latLng() = LatLng(lat, lon)
 private fun MapPosition.geoPoint() = GeoPoint(lat, lon)
-private fun pathColor(speed: Double?) = speed?.let {
-    android.graphics.Color.HSVToColor(floatArrayOf(speedHue(it), 0.85f, 0.9f))
+private fun pathColor(point: Sample, metric: TraceMetric) = traceHue(point, metric)?.let {
+    android.graphics.Color.HSVToColor(floatArrayOf(it, 0.85f, 0.9f))
 } ?: android.graphics.Color.GRAY
 
 @Composable
 fun TrackMap(points: List<Sample>, follow: Boolean, modifier: Modifier,
-             current: MapPosition? = null, selected: MapPosition? = null) {
+             current: MapPosition? = null, selected: MapPosition? = null, metric: TraceMetric = TraceMetric.SPEED) {
     var useGoogle by remember { mutableStateOf(BuildConfig.GOOGLE_MAPS_ENABLED) }
     Box(modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(24.dp))) {
-        if (useGoogle) GoogleTrackMap(points, follow, current, selected)
-        else OsmTrackMap(points, follow, current, selected)
+        if (useGoogle) GoogleTrackMap(points, follow, current, selected, metric)
+        else OsmTrackMap(points, follow, current, selected, metric)
         if (BuildConfig.GOOGLE_MAPS_ENABLED) TextButton(
             onClick = { useGoogle = !useGoogle },
             modifier = Modifier.align(Alignment.TopEnd).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
@@ -71,7 +71,7 @@ fun TrackMap(points: List<Sample>, follow: Boolean, modifier: Modifier,
 }
 
 @Composable
-private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPosition?, selected: MapPosition?) {
+private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPosition?, selected: MapPosition?, metric: TraceMetric) {
     val context = LocalContext.current
     val pinBitmap = remember(context) { mapPinBitmap(context) }
     val camera = rememberCameraPositionState {
@@ -98,7 +98,7 @@ private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPo
         GoogleMap(modifier = Modifier.fillMaxSize(), cameraPositionState = camera,
             onMapLoaded = { loaded = true }, uiSettings = MapUiSettings(zoomControlsEnabled = true, mapToolbarEnabled = false)) {
             points.zipWithNext().forEach { (a, b) ->
-                if (a.segment == b.segment) Polyline(points = listOf(a.position().latLng(), b.position().latLng()), color = Color(pathColor(b.speed)), width = 10f)
+                if (a.segment == b.segment) Polyline(points = listOf(a.position().latLng(), b.position().latLng()), color = Color(pathColor(b, metric)), width = 10f)
             }
             if (pinIcon != null) target?.let {
                 Marker(state = remember(it) { MarkerState(position = it.latLng()) }, icon = pinIcon,
@@ -111,7 +111,7 @@ private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPo
 }
 
 @Composable
-private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosition?, selected: MapPosition?) {
+private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosition?, selected: MapPosition?, metric: TraceMetric) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val pinBitmap = remember(context) { mapPinBitmap(context) }
@@ -131,11 +131,11 @@ private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosit
         if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) map.onResume()
         onDispose { owner.lifecycle.removeObserver(observer); map.onPause(); map.onDetach() }
     }
-    val trackLines = remember(points) {
+    val trackLines = remember(points, metric) {
         points.zipWithNext().filter { (a, b) -> a.segment == b.segment }.map { (a, b) ->
             OsmPolyline(map).apply {
                 setPoints(listOf(a.position().geoPoint(), b.position().geoPoint()))
-                outlinePaint.strokeWidth = 10f; outlinePaint.color = pathColor(b.speed)
+                outlinePaint.strokeWidth = 10f; outlinePaint.color = pathColor(b, metric)
                 title = "${number(b.speed?.times(3.6), "km/h")} • ${number(b.lean, "°")} • ${number(b.acceleration?.div(STANDARD_GRAVITY), "G")}"
             }
         }
@@ -150,8 +150,12 @@ private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosit
                 setAnchor(0.5f, 0.95f)
                 title = if (follow) "Posizione attuale" else "Istante selezionato"
             })
-            map.controller.setZoom(16.0); map.controller.animateTo(it.geoPoint())
+
         }
+        map.invalidate()
+    }
+    LaunchedEffect(target, points.isNotEmpty()) {
+        target?.let { map.controller.setZoom(16.0); map.controller.animateTo(it.geoPoint()) }
         if (!follow && target == null && points.isNotEmpty()) map.post {
             if (points.map { it.position() }.distinct().size > 1)
                 map.zoomToBoundingBox(BoundingBox.fromGeoPoints(points.map { it.position().geoPoint() }), false, 70)
