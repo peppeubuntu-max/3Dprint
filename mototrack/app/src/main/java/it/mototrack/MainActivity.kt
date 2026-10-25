@@ -7,27 +7,31 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import kotlin.math.roundToLong
 import android.provider.Settings
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -37,12 +41,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.BoundingBox
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -53,7 +51,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("map", MODE_PRIVATE))
-            userAgentValue = "it.mototrack/0.2 Android"
+            userAgentValue = "it.mototrack/0.4 Android"
             osmdroidBasePath = java.io.File(filesDir, "osmdroid").apply { mkdirs() }
             osmdroidTileCache = java.io.File(cacheDir, "map-tiles").apply { mkdirs() }
         }
@@ -68,14 +66,19 @@ internal fun number(v: Double?, suffix: String) = v?.let { String.format(Locale.
 internal fun date(id: Long) = DateTimeFormatter.ofPattern("dd MMM yyyy • HH:mm", Locale.ITALY).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(id))
 internal fun duration(ms: Long): String = "%02d:%02d:%02d".format(ms / 3600000, ms / 60000 % 60, ms / 1000 % 60)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MotoTrack() {
     val context = LocalContext.current
     val state by TrackingService.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var rides by remember { mutableStateOf(emptyList<Ride>()) }
-    var selected by remember { mutableStateOf<Ride?>(null) }
+    var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val selected = rides.firstOrNull { it.id == selectedId }
+    var loadingRides by remember { mutableStateOf(true) }
+    var archiveError by remember { mutableStateOf<String?>(null) }
+    var refreshArchive by remember { mutableIntStateOf(0) }
     var export by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var locationGranted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
@@ -114,111 +117,192 @@ private fun MotoTrack() {
     LaunchedEffect(Unit) {
         if (!locationGranted) permissions.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
-    LaunchedEffect(tab, state.mode) {
+    LaunchedEffect(tab, state.mode, refreshArchive) {
         if (tab == 1) {
+            loadingRides = true; archiveError = null
             val result = withContext(Dispatchers.IO) { runCatching { RideStore(context).list() } }
-            result.onSuccess { rides = it }.onFailure { notice = "Impossibile leggere l’archivio" }
+            result.onSuccess { rides = it }.onFailure { archiveError = "Impossibile leggere i giri" }
+            loadingRides = false
         }
     }
-    Column(Modifier.fillMaxSize().systemBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text("MOTOTRACK", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-                Text("Ogni curva, il tuo viaggio", style = MaterialTheme.typography.labelMedium)
-            }
-            TextButton(onClick = { tab = 1 - tab; selected = null }) { Text(if (tab == 0) "Giri →" else "← Registra") }
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    var showCalibration by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.mode) { if (state.mode == Mode.IDLE) showCalibration = false }
+    BackHandler(enabled = drawer.isOpen || selected != null || tab != 0) {
+        when {
+            drawer.isOpen -> scope.launch { drawer.close() }
+            selected != null -> selectedId = null
+            else -> tab = 0
         }
-        if (tab == 0) {
-            TrackMap(state.ride?.points.orEmpty(), true, Modifier.weight(1f).fillMaxWidth(),
-                current = preview?.let { MapPosition(it.latitude, it.longitude) })
-            Column(Modifier.fillMaxWidth().heightIn(max = 410.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("● 0   🟡 60   🔴 120+ km/h · grigio: dato assente", style = MaterialTheme.typography.labelSmall)
-                Text(notice ?: if (state.mode == Mode.IDLE) {
-                    if (preview == null) "Attendo la posizione: verifica che il GPS sia attivo" else "Posizione disponibile • pronto per partire"
-                } else state.message, color = MaterialTheme.colorScheme.primary)
-                if (!locationGranted) TextButton(onClick = {
-                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${context.packageName}")))
-                }) { Text("Abilita posizione nelle impostazioni") }
-                val fresh = state.mode == Mode.RECORDING && state.lastFixElapsed > 0 && SystemClock.elapsedRealtime() - state.lastFixElapsed < 5000
-                val p = state.ride?.points?.lastOrNull().takeIf { fresh }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Metric("VELOCITÀ", number(p?.speed?.times(3.6), "km/h"))
-                    Metric("PIEGA ≈", number(state.lean, "°"))
-                    Metric(if (state.accelerationSource == "sensor") "ACCEL. SENSORE" else "ACCEL. GPS ≈", number(state.accelerationG.takeIf { state.mode == Mode.RECORDING && (state.accelerationSource == "sensor" || fresh) }, "G"))
-                }
-                Text("${duration(state.ride?.activeMillis ?: 0)}  •  ${number((state.ride?.distanceMeters ?: 0.0) / 1000, "km")}")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (state.mode == Mode.IDLE) Button(modifier = Modifier.weight(1f), onClick = {
-                        startAfterPermission = true
-                        val required = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.POST_NOTIFICATIONS)
-                        permissions.launch(required.toTypedArray())
-                    }) { Text("Avvia giro") }
-                    else {
-                        val saving = state.message == "Salvataggio…"
-                        Button(enabled = !saving, modifier = Modifier.weight(1f), onClick = {
-                            command(if (state.mode == Mode.RECORDING) TrackingService.PAUSE else TrackingService.RESUME)
-                        }) { Text(if (state.mode == Mode.RECORDING) "Pausa" else "Riprendi") }
-                        FilledTonalButton(enabled = !saving, modifier = Modifier.weight(1f), onClick = { command(TrackingService.STOP) }) { Text("Stop e salva") }
+    }
+    fun navigate(destination: Int) {
+        tab = destination; selectedId = null
+        scope.launch { drawer.close() }
+    }
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
+        ModalDrawerSheet {
+            Text("MotoTrack", Modifier.padding(28.dp), style = MaterialTheme.typography.headlineSmall)
+            NavigationDrawerItem(label = { Text("Registra") }, selected = tab == 0,
+                icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                onClick = { navigate(0) }, modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding))
+            NavigationDrawerItem(label = { Text("Giri") }, selected = tab == 1,
+                icon = { Icon(Icons.Default.List, contentDescription = null) },
+                onClick = { navigate(1) }, modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding))
+        }
+    }) {
+        Scaffold(
+            topBar = {
+                TopAppBar(title = { Text(if (selected != null) "Dettaglio giro" else if (tab == 0) "Registra" else "Giri") },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (selected != null) selectedId = null else scope.launch { drawer.open() }
+                        }) {
+                            Icon(if (selected != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Menu,
+                                contentDescription = if (selected != null) "Torna ai giri" else "Apri menu di navigazione")
+                        }
+                    },
+                    actions = {
+                        if (tab == 1 && state.mode != Mode.IDLE) TextButton(onClick = { navigate(0) }) {
+                            Text(if (state.mode == Mode.RECORDING) "In registrazione" else "In pausa")
+                        }
+                    })
+            },
+            bottomBar = {
+                if (tab == 0) Surface(tonalElevation = 3.dp) {
+                    Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        Row(Modifier.widthIn(max = 840.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (state.mode == Mode.IDLE) Button(modifier = Modifier.weight(1f).heightIn(min = 56.dp), onClick = {
+                                startAfterPermission = true
+                                val required = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                                if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.POST_NOTIFICATIONS)
+                                permissions.launch(required.toTypedArray())
+                            }) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Avvia giro") }
+                            else {
+                                val saving = state.message == "Salvataggio…"
+                                Button(enabled = !saving, modifier = Modifier.weight(1f).heightIn(min = 56.dp), onClick = {
+                                    command(if (state.mode == Mode.RECORDING) TrackingService.PAUSE else TrackingService.RESUME)
+                                }) { Text(if (state.mode == Mode.RECORDING) "Pausa" else "Riprendi") }
+                                FilledTonalButton(enabled = !saving, modifier = Modifier.weight(1f).heightIn(min = 56.dp),
+                                    onClick = { command(TrackingService.STOP) }) { Text(if (saving) "Salvataggio…" else "Stop e salva") }
+                            }
+                        }
+                        if (state.mode != Mode.IDLE) TextButton(enabled = state.message != "Salvataggio…", onClick = { showCalibration = true }) {
+                            Text(if (state.calibrated) "Sensori calibrati · Ricalibra" else "Calibra sensori")
+                        }
                     }
                 }
-                OutlinedButton(enabled = state.mode != Mode.IDLE, modifier = Modifier.fillMaxWidth(), onClick = { command(if (state.awaitingRightLean) TrackingService.CONFIRM_RIGHT else TrackingService.ZERO) }) {
-                    Text(if (state.awaitingRightLean) "2/2 Conferma inclinazione a destra" else if (state.calibrated) "Ricalibra montaggio" else "1/2 Moto verticale: imposta zero")
-                }
-                if (state.awaitingRightLean) TextButton(onClick = { command(TrackingService.ZERO) }) { Text("Ripeti zero a moto verticale") }
-                if (state.mode != Mode.IDLE) Text(state.calibrationHint, style = MaterialTheme.typography.bodySmall)
-                Text(if (state.mode == Mode.IDLE) "Avvia e calibra per misurare l’accelerazione in G." else if (!state.sensorAvailable) "Sensore lineare non disponibile: stima GPS in G." else if (!state.calibrated) "Calibra a moto ferma per attivare i G del sensore." else "G dal sensore; stima GPS se il dato manca.", style = MaterialTheme.typography.labelSmall)
-                Text("Telefono fissato in qualsiasi orientamento. Calibra da fermo, manubrio dritto, in un luogo sicuro e con aiuto se necessario. Piega stimata; +G accelerazione, −G frenata.", style = MaterialTheme.typography.bodySmall)
             }
-        } else {
-            val detail = selected
-            if (detail != null) {
-                TextButton(onClick = { selected = null }) { Text("← Tutti i giri") }
-                Text(date(detail.id), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
-                var second by remember(detail.id) { mutableLongStateOf(0L) }
-                val lastSecond = remember(detail) { ((detail.timelineEnd() - detail.id + 999) / 1000).coerceAtLeast(0) }
-                val playback = remember(detail, second) { detail.playback(second) }
-                TrackMap(detail.points, false, Modifier.weight(1f).fillMaxWidth(),
-                    selected = playback.point?.let { MapPosition(it.lat, it.lon) })
-                Column(Modifier.fillMaxWidth().heightIn(max = 370.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Esplora il giro • ${duration(second * 1000)} / ${duration(lastSecond * 1000)}")
-                    Slider(value = second.toFloat(), onValueChange = { second = it.roundToLong().coerceIn(0, lastSecond) },
-                        valueRange = 0f..lastSecond.coerceAtLeast(1).toFloat(), enabled = lastSecond > 0)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { second = (second - 1).coerceAtLeast(0) }, enabled = second > 0) { Text("−1 s") }
-                        TextButton(onClick = { second = (second + 1).coerceAtMost(lastSecond) }, enabled = second < lastSecond) { Text("+1 s") }
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), contentAlignment = Alignment.TopCenter) {
+                if (tab == 0) {
+                    Column(Modifier.widthIn(max = 840.dp).fillMaxSize()) {
+                        val status = notice ?: when {
+                            state.mode == Mode.PAUSED -> state.message
+                            state.mode == Mode.RECORDING -> state.message
+                            preview != null -> "GPS pronto"
+                            else -> "Ricerca posizione…"
+                        }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(status, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                                color = if (notice != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (!locationGranted) TextButton(onClick = {
+                                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${context.packageName}")))
+                            }) { Text("Permessi") }
+                        }
+                        TrackMap(state.ride?.points.orEmpty(), true, Modifier.weight(1f).fillMaxWidth(),
+                            current = preview?.let { MapPosition(it.latitude, it.longitude) })
+                        val fresh = state.mode == Mode.RECORDING && state.lastFixElapsed > 0 && SystemClock.elapsedRealtime() - state.lastFixElapsed < 5000
+                        val p = state.ride?.points?.lastOrNull().takeIf { fresh }
+                        ElevatedCard(Modifier.fillMaxWidth().padding(16.dp)) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                TelemetryRow(p?.speed, state.lean,
+                                    state.accelerationG.takeIf { state.mode == Mode.RECORDING && (state.accelerationSource == "sensor" || fresh) },
+                                    state.accelerationSource)
+                                HorizontalDivider()
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(duration(state.ride?.activeMillis ?: 0), style = MaterialTheme.typography.titleMedium)
+                                    Text(number((state.ride?.distanceMeters ?: 0.0) / 1000, "km"), style = MaterialTheme.typography.titleMedium)
+                                }
+                            }
+                        }
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Metric("VELOCITÀ", number(playback.point?.speed?.times(3.6), "km/h"))
-                        Metric("PIEGA ≈", number(playback.point?.lean, "°"))
-                        Metric("ACCEL.", number(playback.accelerationG, "G"))
-                    }
-                    Text(if (playback.point == null && playback.accelerationG == null) "Pausa o dati non disponibili in questo istante"
-                        else "Campione più vicino • G: ${if (playback.source == "sensor") "sensore" else "stima GPS"}", style = MaterialTheme.typography.bodySmall)
-                    HorizontalDivider()
-                    Text(if (detail.ended == null) "Traccia recuperata da una registrazione interrotta" else "Giro completato")
-                    Text("${number(detail.distanceMeters / 1000, "km")} • ${duration(detail.activeMillis)} attivi")
-                    Text("Velocità massima: ${number(detail.maxSpeed?.times(3.6), "km/h")}")
-                    Text("Media sul tempo attivo: ${number(if (detail.activeMillis > 0) detail.distanceMeters / detail.activeMillis * 3600 else null, "km/h")}")
-                    Text("Piega massima stimata: ${number(detail.maxLean, "°")}")
-                    Text("Accelerazione: ${number(detail.maxAcceleration?.div(STANDARD_GRAVITY), "G")} • Frenata: ${number(detail.maxBraking?.div(STANDARD_GRAVITY), "G")}")
-                    Text(if (detail.inertial.isNotEmpty()) "Picchi dai sensori • ${detail.inertial.size} campioni inerziali" else "Picchi stimati da GPS", style = MaterialTheme.typography.bodySmall)
-                    Text("${detail.points.size} campioni • ${detail.points.map { it.segment }.distinct().size} segmenti", style = MaterialTheme.typography.bodySmall)
-                    Button(modifier = Modifier.fillMaxWidth(), onClick = {
-                        export = detail.gpx(); save.launch("MotoTrack-${detail.id}.gpx")
-                    }) { Text("Scarica GPX con telemetria") }
-                    Text("Sposta lo slider per esplorare i dati secondo per secondo. Colori: verde 0, giallo 60, rosso ≥120 km/h.", style = MaterialTheme.typography.bodySmall)
-                }
-            } else {
-                Text("I tuoi giri", Modifier.padding(16.dp), style = MaterialTheme.typography.headlineMedium)
-                if (rides.isEmpty()) Text("Nessun giro salvato. Avvia una registrazione e premi Stop.", Modifier.padding(16.dp))
-                LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(rides.filter { it.id != state.ride?.id }, key = { it.id }) { r ->
-                        Card(onClick = { selected = r }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(date(r.id), style = MaterialTheme.typography.titleMedium)
-                                Text("${number(r.distanceMeters / 1000, "km")}  •  ${duration(r.activeMillis)}")
-                                Text(if (r.ended == null) "Registrazione interrotta • Apri →" else "Apri percorso e dettagli →", color = MaterialTheme.colorScheme.primary)
+                } else {
+                    val detail = selected
+                    if (detail != null) {
+                        var second by rememberSaveable(detail.id) { mutableLongStateOf(0L) }
+                        val lastSecond = remember(detail) { ((detail.timelineEnd() - detail.id + 999) / 1000).coerceAtLeast(0) }
+                        val playback = remember(detail, second) { detail.playback(second) }
+                        LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            item { Text(date(detail.id), Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium) }
+                            item { TrackMap(detail.points, false, Modifier.fillMaxWidth().height(280.dp),
+                                selected = playback.point?.let { MapPosition(it.lat, it.lon) }) }
+                            item {
+                                ElevatedCard(Modifier.padding(horizontal = 16.dp)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("Dati del percorso", style = MaterialTheme.typography.titleMedium)
+                                        Text("${duration(second * 1000)} / ${duration(lastSecond * 1000)}", style = MaterialTheme.typography.bodyMedium)
+                                        Slider(value = second.toFloat(), onValueChange = { second = it.roundToLong().coerceIn(0, lastSecond) },
+                                            modifier = Modifier.semantics { contentDescription = "Istante del giro in secondi" },
+                                            valueRange = 0f..lastSecond.coerceAtLeast(1).toFloat(), enabled = lastSecond > 0)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            TextButton(onClick = { second = (second - 1).coerceAtLeast(0) }, enabled = second > 0,
+                                                modifier = Modifier.semantics { contentDescription = "Indietro di un secondo" }) { Text("−1 s") }
+                                            TextButton(onClick = { second = (second + 1).coerceAtMost(lastSecond) }, enabled = second < lastSecond,
+                                                modifier = Modifier.semantics { contentDescription = "Avanti di un secondo" }) { Text("+1 s") }
+                                        }
+                                        TelemetryRow(playback.point?.speed, playback.point?.lean, playback.accelerationG, playback.source)
+                                        if (playback.point == null && playback.accelerationG == null)
+                                            Text("Nessun dato in questo istante", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                            item {
+                                OutlinedCard(Modifier.padding(horizontal = 16.dp)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("Riepilogo", style = MaterialTheme.typography.titleMedium)
+                                        if (detail.ended == null) Text("Registrazione interrotta", color = MaterialTheme.colorScheme.error)
+                                        SummaryRow("Distanza", number(detail.distanceMeters / 1000, "km"))
+                                        SummaryRow("Tempo attivo", duration(detail.activeMillis))
+                                        SummaryRow("Velocità massima", number(detail.maxSpeed?.times(3.6), "km/h"))
+                                        SummaryRow("Velocità media", number(if (detail.activeMillis > 0) detail.distanceMeters / detail.activeMillis * 3600 else null, "km/h"))
+                                        SummaryRow("Piega massima", number(detail.maxLean, "°"))
+                                        SummaryRow("Accelerazione", number(detail.maxAcceleration?.div(STANDARD_GRAVITY), "G"))
+                                        SummaryRow("Frenata", number(detail.maxBraking?.div(STANDARD_GRAVITY), "G"))
+                                    }
+                                }
+                            }
+                            item {
+                                Button(modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().heightIn(min = 56.dp), onClick = {
+                                    export = detail.gpx(); save.launch("MotoTrack-${detail.id}.gpx")
+                                }) { Text("Esporta GPX") }
+                            }
+                        }
+                    } else {
+                        val visibleRides = rides.filter { it.id != state.ride?.id }
+                        if (loadingRides) CircularProgressIndicator(Modifier.align(Alignment.Center))
+                        else if (archiveError != null) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(archiveError!!)
+                            TextButton(onClick = { refreshArchive++ }) { Text("Riprova") }
+                        }
+                        else if (visibleRides.isEmpty()) Column(Modifier.align(Alignment.Center).padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Icon(Icons.Default.List, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text("Nessun giro salvato", style = MaterialTheme.typography.titleLarge)
+                            Button(onClick = { navigate(0) }) { Text("Vai a Registra") }
+                        } else LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize(), contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(visibleRides, key = { it.id }) { r ->
+                                Card(onClick = { selectedId = r.id }, modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(date(r.id), style = MaterialTheme.typography.titleMedium)
+                                        Text("${number(r.distanceMeters / 1000, "km")}  ·  ${duration(r.activeMillis)}",
+                                            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (r.ended == null) Text("Registrazione interrotta", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
                             }
                         }
                     }
@@ -226,11 +310,39 @@ private fun MotoTrack() {
             }
         }
     }
+    if (showCalibration && state.mode != Mode.IDLE) AlertDialog(
+        onDismissRequest = { showCalibration = false },
+        title = { Text(if (state.calibrated) "Sensori calibrati" else if (state.awaitingRightLean) "2 di 2 · Inclina a destra" else "1 di 2 · Moto verticale") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(state.calibrationHint)
+            if (!state.calibrated && !state.awaitingRightLean) Text("Moto ferma, manubrio dritto. Mantieni la posizione per un secondo.")
+            if (state.awaitingRightLean) TextButton(onClick = { command(TrackingService.ZERO) }) { Text("Ripeti zero a moto verticale") }
+        } },
+        confirmButton = { TextButton(onClick = {
+            command(if (state.awaitingRightLean) TrackingService.CONFIRM_RIGHT else TrackingService.ZERO)
+        }) { Text(if (state.calibrated) "Ricalibra" else if (state.awaitingRightLean) "Conferma" else "Imposta zero") } },
+        dismissButton = { TextButton(onClick = { showCalibration = false }) { Text("Chiudi") } })
+}
+
+@Composable
+private fun TelemetryRow(speed: Double?, lean: Double?, acceleration: Double?, source: String?) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Metric("Velocità", number(speed?.times(3.6), "km/h"), Modifier.weight(1f))
+        Metric("Piega ≈", number(lean, "°"), Modifier.weight(1f))
+        Metric(if (source == "gps") "Accel. GPS ≈" else "Accel. sensore", number(acceleration, "G"), Modifier.weight(1f))
+    }
 }
 @Composable
-private fun Metric(label: String, value: String) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelSmall)
-        Text(value, style = MaterialTheme.typography.titleMedium)
+private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier.semantics(mergeDescendants = true) {}) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleLarge)
+    }
+}
+@Composable
+private fun SummaryRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleSmall)
     }
 }

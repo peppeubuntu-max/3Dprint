@@ -161,3 +161,14 @@ Esportare prima i giri in GPX: la disinstallazione rimuove i dati locali.
 Non usare la firma debug temporanea per una distribuzione definitiva.
 
 Versione 0.3: calibrazione indipendente dal montaggio, controlli di stabilità e pannello registrazione scorrevole. Validazione fisica su moto ancora necessaria.
+
+## Versione 0.4: interfaccia Material 3
+
+Menu laterale con Registra e Giri, barra superiore con ritorno dal dettaglio,
+comandi di registrazione persistenti in basso e schede per telemetria e riepilogo.
+Legenda colori e testi esplicativi fissi rimossi. La calibrazione guidata è
+accessibile dalla finestra Calibra sensori. Target dei comandi principali di
+almeno 56 dp, navigazione con Indietro, etichette per lettori di schermo,
+sezione e giro selezionato conservati durante la ricreazione dell'attività.
+Archivio con stato di caricamento, errore/riprova e stato vuoto con accesso a
+Registra. Il dettaglio scorre per rendere accessibili slider e dati su schermi piccoli.
