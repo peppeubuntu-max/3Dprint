@@ -1,5 +1,13 @@
 package it.mototrack
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import androidx.core.content.ContextCompat
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import androidx.compose.ui.geometry.Offset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +36,18 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline as OsmPolyline
 
+// Draw the same vector at device density for both map providers.
+private fun mapPinBitmap(context: Context): Bitmap {
+    val density = context.resources.displayMetrics.density
+    val width = (32 * density).roundToInt().coerceAtLeast(1)
+    val height = (40 * density).roundToInt().coerceAtLeast(1)
+    return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+        val pin = requireNotNull(ContextCompat.getDrawable(context, R.drawable.ic_map_pin))
+        pin.setBounds(0, 0, width, height)
+        pin.draw(Canvas(bitmap))
+    }
+}
+
 data class MapPosition(val lat: Double, val lon: Double)
 private fun Sample.position() = MapPosition(lat, lon)
 private fun MapPosition.latLng() = LatLng(lat, lon)
@@ -52,11 +72,14 @@ fun TrackMap(points: List<Sample>, follow: Boolean, modifier: Modifier,
 
 @Composable
 private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPosition?, selected: MapPosition?) {
+    val context = LocalContext.current
+    val pinBitmap = remember(context) { mapPinBitmap(context) }
     val camera = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(LatLng(42.5, 12.5), 5f)
     }
     var loaded by remember { mutableStateOf(false) }
     var slow by remember { mutableStateOf(false) }
+    val pinIcon = remember(loaded, pinBitmap) { if (loaded) BitmapDescriptorFactory.fromBitmap(pinBitmap) else null }
     val target = if (follow) current ?: points.lastOrNull()?.position() else selected
     LaunchedEffect(loaded, target) {
         if (loaded && target != null) camera.animate(CameraUpdateFactory.newLatLngZoom(target.latLng(), 16f))
@@ -77,7 +100,10 @@ private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPo
             points.zipWithNext().forEach { (a, b) ->
                 if (a.segment == b.segment) Polyline(points = listOf(a.position().latLng(), b.position().latLng()), color = Color(pathColor(b.speed)), width = 10f)
             }
-            target?.let { Marker(state = remember(it) { MarkerState(position = it.latLng()) }, title = if (follow) "Posizione attuale" else "Istante selezionato") }
+            if (pinIcon != null) target?.let {
+                Marker(state = remember(it) { MarkerState(position = it.latLng()) }, icon = pinIcon,
+                    anchor = Offset(0.5f, 0.95f), title = if (follow) "Posizione attuale" else "Istante selezionato")
+            }
         }
         if (!loaded && slow) Text("Mappa non caricata. Verifica la connessione o prova Mappa alternativa.",
             Modifier.align(Alignment.Center).background(MaterialTheme.colorScheme.surface).padding(12.dp))
@@ -88,6 +114,7 @@ private fun GoogleTrackMap(points: List<Sample>, follow: Boolean, current: MapPo
 private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosition?, selected: MapPosition?) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
+    val pinBitmap = remember(context) { mapPinBitmap(context) }
     val map = remember { MapView(context).apply {
         setTileSource(TileSourceFactory.MAPNIK)
         setUseDataConnection(true)
@@ -117,7 +144,12 @@ private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosit
     LaunchedEffect(trackLines, target) {
         map.overlays.clear(); map.overlays.addAll(trackLines)
         target?.let {
-            map.overlays.add(Marker(map).apply { position = it.geoPoint(); title = if (follow) "Posizione attuale" else "Istante selezionato" })
+            map.overlays.add(Marker(map).apply {
+                position = it.geoPoint()
+                icon = BitmapDrawable(context.resources, pinBitmap)
+                setAnchor(0.5f, 0.95f)
+                title = if (follow) "Posizione attuale" else "Istante selezionato"
+            })
             map.controller.setZoom(16.0); map.controller.animateTo(it.geoPoint())
         }
         if (!follow && target == null && points.isNotEmpty()) map.post {
