@@ -299,11 +299,15 @@ private fun MotoTrack() {
                             verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(visibleRides, key = { it.id }) { r ->
                                 Card(onClick = { selectedId = r.id }, modifier = Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                      RideTraceThumbnail(r.points, Modifier.size(80.dp))
+                                      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(date(r.id), style = MaterialTheme.typography.titleMedium)
                                         Text("${number(r.distanceMeters / 1000, "km")}  ·  ${duration(r.activeMillis)}",
                                             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         if (r.ended == null) Text("Registrazione interrotta", style = MaterialTheme.typography.labelMedium)
+                                      }
                                     }
                                 }
                             }
