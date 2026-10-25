@@ -189,6 +189,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
             lastKnownSpeed = location.speed.toDouble(); lastKnownSpeedNanos = location.elapsedRealtimeNanos
         }
         if (mutable.value.mode != Mode.RECORDING) return
+        if (location.elapsedRealtimeNanos < activeStart * 1_000_000L) return
         if (!location.hasAccuracy() || location.accuracy > 30 || location.accuracy <= 0) return
         val age = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
         if (age !in 0..10_000_000_000L || location.elapsedRealtimeNanos <= lastLocationNanos) return
@@ -218,6 +219,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
             val linear = DoubleArray(3) { event.values[it].toDouble() }
             guide?.acceleration(linear, event.timestamp)
             if (mutable.value.mode != Mode.RECORDING || saving || guide != null) return
+            if (event.timestamp < activeStart * 1_000_000L) return
             if (event.timestamp - lastUpNanos !in -100_000_000L..1_000_000_000L) return
             val g = telemetry.acceleration(linear, event.timestamp) ?: return
             latestG = g; lastInertialNanos = event.timestamp
