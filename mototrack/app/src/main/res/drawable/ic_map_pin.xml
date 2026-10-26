@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp" android:height="40dp"
+    android:viewportWidth="32" android:viewportHeight="40">
+    <!-- Same pin silhouette as the launcher; tip at (16,38), anchor (0.5,0.95). -->
+    <group android:translateX="-34" android:translateY="-10.4">
+        <path android:fillColor="@color/map_pin_green" android:strokeColor="#FFFFFF"
+            android:strokeWidth="1.4" android:strokeLineJoin="round"
+            android:pathData="M50,11.4 C42.4,11.4 36.3,17.6 36.3,25.2 C36.3,32.2 43.5,41 50,48.4 C56.5,41 63.7,32.2 63.7,25.2 C63.7,17.6 57.6,11.4 50,11.4 Z"/>
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M56,25.2 A6,6 0,1 1,44,25.2 A6,6 0,1 1,56,25.2 Z"/>
+    </group>
+</vector>
