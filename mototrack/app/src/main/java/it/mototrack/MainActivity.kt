@@ -75,6 +75,9 @@ private fun MotoTrack() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var rides by remember { mutableStateOf(emptyList<Ride>()) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var deleteId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var deleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
     val selected = rides.firstOrNull { it.id == selectedId }
     var loadingRides by remember { mutableStateOf(true) }
     var archiveError by remember { mutableStateOf<String?>(null) }
@@ -295,6 +298,13 @@ private fun MotoTrack() {
                                     export = detail.gpx(); save.launch("MotoTrack-${detail.id}.gpx")
                                 }) { Text("Esporta GPX") }
                             }
+                            item {
+                                OutlinedButton(onClick = { deleteError = null; deleteId = detail.id },
+                                    modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().heightIn(min = 48.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                                    Text("Elimina giro")
+                                }
+                            }
                         }
                     } else {
                         val visibleRides = rides.filter { it.id != state.ride?.id }
@@ -329,6 +339,35 @@ private fun MotoTrack() {
                 }
             }
         }
+    }
+    deleteId?.let { id ->
+        AlertDialog(onDismissRequest = { if (!deleting) deleteId = null },
+            title = { Text("Eliminare questo giro?") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(date(id))
+                Text("Il giro e tutti i suoi dati verranno eliminati dal telefono. L’operazione non può essere annullata. I GPX già esportati restano disponibili.")
+                deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            } },
+            dismissButton = { TextButton(onClick = { deleteId = null }, enabled = !deleting) { Text("Annulla") } },
+            confirmButton = {
+                TextButton(enabled = !deleting, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    onClick = {
+                        deleting = true; deleteError = null
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching {
+                                check(TrackingService.state.value.ride?.id != id) { "Giro ancora in corso" }
+                                RideStore(context).delete(id)
+                            } }
+                            deleting = false
+                            result.onSuccess {
+                                rides = rides.filterNot { it.id == id }
+                                if (selectedId == id) selectedId = null
+                                deleteId = null; refreshArchive++
+                                Toast.makeText(context, "Giro eliminato", Toast.LENGTH_SHORT).show()
+                            }.onFailure { deleteError = "Impossibile eliminare il giro. Riprova." }
+                        }
+                    }) { Text(if (deleting) "Eliminazione…" else "Elimina") }
+            })
     }
     if (showCalibration && state.mode != Mode.IDLE) CalibrationDialog(state,
         onConfirm = { command(TrackingService.CONFIRM_CALIBRATION) },

@@ -9,6 +9,12 @@ import java.io.File
 class RideStore(context: Context) {
     private val directory = File(context.filesDir, "rides").apply { mkdirs() }
     private fun file(id: Long) = AtomicFile(File(directory, "$id.json"))
+    fun delete(id: Long) {
+        file(id).delete()
+        check(listOf("$id.json", "$id.json.bak", "$id.json.new").none { File(directory, it).exists() }) {
+            "Impossibile eliminare il giro"
+        }
+    }
     fun save(ride: Ride) {
         val json = JSONObject().put("id", ride.id).put("ended", ride.ended ?: JSONObject.NULL)
             .put("activeMillis", ride.activeMillis)
