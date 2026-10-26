@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-internal fun number(v: Double?, suffix: String) = v?.let { String.format(Locale.ITALY, if (suffix == "G") "%.2f %s" else "%.1f %s", it, suffix) } ?: "—"
+internal fun number(v: Double?, suffix: String) = v?.let { String.format(Locale.ITALY, if (suffix == "G") "%.2f %s" else "%.1f %s", if (suffix == "°") kotlin.math.abs(it) else it, suffix) } ?: "—"
 internal fun date(id: Long) = DateTimeFormatter.ofPattern("dd MMM yyyy • HH:mm", Locale.ITALY).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(id))
 internal fun duration(ms: Long): String = "%02d:%02d:%02d".format(ms / 3600000, ms / 60000 % 60, ms / 1000 % 60)
 
@@ -285,8 +285,8 @@ private fun MotoTrack() {
                                         SummaryRow("Velocità massima", number(detail.maxSpeed?.times(3.6), "km/h"))
                                         SummaryRow("Velocità media", number(if (detail.activeMillis > 0) detail.distanceMeters / detail.activeMillis * 3600 else null, "km/h"))
                                         SummaryRow("Piega massima", number(detail.maxLean, "°"))
-                                        SummaryRow("Accelerazione", number(detail.maxAcceleration?.div(STANDARD_GRAVITY), "G"))
-                                        SummaryRow("Frenata", number(detail.maxBraking?.div(STANDARD_GRAVITY), "G"))
+                                        SummaryRow("Accelerazione", number(detail.maxAcceleration, "m/s²"))
+                                        SummaryRow("Frenata", number(detail.maxBraking, "m/s²"))
                                     }
                                 }
                             }
@@ -344,7 +344,7 @@ private fun TelemetryRow(speed: Double?, lean: Double?, acceleration: Double?, s
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Metric("Velocità", number(speed?.times(3.6), "km/h"), Modifier.weight(1f))
         Metric("Piega ≈", number(lean, "°"), Modifier.weight(1f))
-        Metric(if (source == "gps") "Accel. GPS ≈" else "Accel. sensore", number(acceleration, "G"), Modifier.weight(1f))
+        Metric(if (source == "gps") "Accel. GPS ≈" else "Accel. sensore", number(acceleration?.times(STANDARD_GRAVITY), "m/s²"), Modifier.weight(1f))
     }
 }
 @Composable

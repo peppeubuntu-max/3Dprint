@@ -10,8 +10,8 @@ android {
         applicationId = "it.mototrack"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.5.4"
+        versionCode = 11
+        versionName = "0.5.5"
         val mapsKey = providers.environmentVariable("MAPS_API_KEY").orElse("").get()
         manifestPlaceholders["MAPS_API_KEY"] = mapsKey
         buildConfigField("boolean", "GOOGLE_MAPS_ENABLED", mapsKey.isNotBlank().toString())

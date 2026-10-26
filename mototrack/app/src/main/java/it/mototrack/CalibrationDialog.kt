@@ -68,7 +68,7 @@ fun CalibrationDialog(state: TrackingState, onConfirm: () -> Unit, onRestart: ()
                     } else {
                         Text("Zero impostato: 0,0°", style = MaterialTheme.typography.titleMedium)
                         Text(if (state.mode == Mode.RECORDING) "Registrazione ripresa" else "Giro in pausa", color = MaterialTheme.colorScheme.primary)
-                        Text("Accelerazione: ${number(state.accelerationG, "G")}", style = MaterialTheme.typography.bodyMedium)
+                        Text("Accelerazione: ${number(state.accelerationG?.times(STANDARD_GRAVITY), "m/s²")}", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -95,7 +95,7 @@ private fun MotorcycleLevel(degrees: Float, rightStep: Boolean) {
     val accent = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.outline
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Canvas(Modifier.fillMaxWidth().height(130.dp).semantics { contentDescription = "Moto vista da dietro, inclinazione ${degrees.toInt()} gradi" }) {
+        Canvas(Modifier.fillMaxWidth().height(130.dp).semantics { contentDescription = "Moto vista da dietro, inclinazione ${kotlin.math.abs(degrees).toInt()} gradi" }) {
             val ground = size.height * 0.86f
             val pivot = Offset(size.width / 2, ground)
             drawLine(muted, Offset(size.width * 0.15f, ground), Offset(size.width * 0.85f, ground), 2.dp.toPx())

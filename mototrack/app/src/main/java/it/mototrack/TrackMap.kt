@@ -136,7 +136,7 @@ private fun OsmTrackMap(points: List<Sample>, follow: Boolean, current: MapPosit
             OsmPolyline(map).apply {
                 setPoints(listOf(a.position().geoPoint(), b.position().geoPoint()))
                 outlinePaint.strokeWidth = 10f; outlinePaint.color = pathColor(b, metric)
-                title = "${number(b.speed?.times(3.6), "km/h")} • ${number(b.lean, "°")} • ${number(b.acceleration?.div(STANDARD_GRAVITY), "G")}"
+                title = "${number(b.speed?.times(3.6), "km/h")} • ${number(b.lean, "°")} • ${number(b.acceleration, "m/s²")}"
             }
         }
     }
